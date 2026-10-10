@@ -1,0 +1,454 @@
+"""Слой доступа к данным. Все функции открывают своё короткое соединение aiosqlite —
+для бота такого масштаба это проще и надёжнее, чем держать один общий connection
+и гонять его между хэндлерами/задачами."""
+from __future__ import annotations
+
+import datetime as dt
+from dataclasses import dataclass
+
+import aiosqlite
+
+from bot.config import settings
+
+DB_PATH = settings.db_path
+
+
+def _now() -> str:
+    return dt.datetime.utcnow().isoformat()
+
+
+def _conn():
+    """Асинхронный context manager, открывающий соединение и сразу выставляющий
+    row_factory. Использование: `async with _conn() as db:` (без await перед _conn()!)."""
+    return _ConnCtx()
+
+
+class _ConnCtx:
+    def __init__(self) -> None:
+        self._db: aiosqlite.Connection | None = None
+
+    async def __aenter__(self) -> aiosqlite.Connection:
+        self._db = await aiosqlite.connect(DB_PATH)
+        self._db.row_factory = aiosqlite.Row
+        return self._db
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self._db.close()
+
+
+# ---------------------------------------------------------------- users ----
+
+async def touch_user(user_id: int, username: str | None, first_name: str) -> None:
+    """Регистрирует пользователя при первом сообщении и обновляет статистику сообщений."""
+    now = dt.datetime.utcnow()
+    day = now.strftime("%Y-%m-%d")
+    week = now.strftime("%Y-%W")
+    month = now.strftime("%Y-%m")
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        row = await cur.fetchone()
+        if row is None:
+            await db.execute(
+                """INSERT INTO users
+                (user_id, username, first_name, joined_at, messages_total, messages_month,
+                 messages_week, messages_day, day_stamp, week_stamp, month_stamp, last_activity_at)
+                VALUES (?, ?, ?, ?, 1, 1, 1, 1, ?, ?, ?, ?)""",
+                (user_id, username, first_name, _now(), day, week, month, _now()),
+            )
+            await db.execute("INSERT OR IGNORE INTO coins (user_id, red_coins) VALUES (?, 0)", (user_id,))
+        else:
+            day_total = row["messages_day"] + 1 if row["day_stamp"] == day else 1
+            week_total = row["messages_week"] + 1 if row["week_stamp"] == week else 1
+            month_total = row["messages_month"] + 1 if row["month_stamp"] == month else 1
+            await db.execute(
+                """UPDATE users SET username=?, first_name=?, messages_total=messages_total+1,
+                   messages_day=?, messages_week=?, messages_month=?,
+                   day_stamp=?, week_stamp=?, month_stamp=?, last_activity_at=?
+                   WHERE user_id=?""",
+                (username, first_name, day_total, week_total, month_total, day, week, month, _now(), user_id),
+            )
+        await db.commit()
+
+
+async def get_user(user_id: int) -> aiosqlite.Row | None:
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        return await cur.fetchone()
+
+
+async def get_user_by_username(username: str) -> aiosqlite.Row | None:
+    username = username.lstrip("@")
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,))
+        return await cur.fetchone()
+
+
+async def set_bio(user_id: int, bio: str) -> None:
+    async with _conn() as db:
+        await db.execute("UPDATE users SET bio=? WHERE user_id=?", (bio, user_id))
+        await db.commit()
+
+
+# ---------------------------------------------------------------- coins ----
+
+async def get_balance(user_id: int) -> int:
+    async with _conn() as db:
+        cur = await db.execute("SELECT red_coins FROM coins WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row["red_coins"] if row else 0
+
+
+async def add_coins(user_id: int, amount: int) -> int:
+    async with _conn() as db:
+        await db.execute("INSERT OR IGNORE INTO coins (user_id, red_coins) VALUES (?, 0)", (user_id,))
+        await db.execute("UPDATE coins SET red_coins = MAX(0, red_coins + ?) WHERE user_id=?", (amount, user_id))
+        cur = await db.execute("SELECT red_coins FROM coins WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        await db.commit()
+        return row["red_coins"]
+
+
+async def try_take_coins(user_id: int, amount: int) -> bool:
+    """Атомарно списывает ставку, если хватает средств."""
+    async with _conn() as db:
+        cur = await db.execute("SELECT red_coins FROM coins WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        balance = row["red_coins"] if row else 0
+        if balance < amount:
+            return False
+        await db.execute("UPDATE coins SET red_coins = red_coins - ? WHERE user_id=?", (amount, user_id))
+        await db.commit()
+        return True
+
+
+async def get_last_farm_at(user_id: int) -> dt.datetime | None:
+    async with _conn() as db:
+        cur = await db.execute("SELECT last_farm_at FROM coins WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if row and row["last_farm_at"]:
+            return dt.datetime.fromisoformat(row["last_farm_at"])
+        return None
+
+
+async def set_last_farm_now(user_id: int) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "INSERT INTO coins (user_id, red_coins, last_farm_at) VALUES (?, 0, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET last_farm_at=excluded.last_farm_at",
+            (user_id, _now()),
+        )
+        await db.commit()
+
+
+# --------------------------------------------------------- relationships ----
+
+REL_TYPES = {
+    "relationship": "отношения",
+    "marriage": "брак",
+    "marriage_of_convenience": "брак по расчету",
+}
+
+
+def _pair(a: int, b: int) -> tuple[int, int]:
+    return (a, b) if a < b else (b, a)
+
+
+async def find_active_relationship(user_a: int, user_b: int, rel_type: str) -> aiosqlite.Row | None:
+    a, b = _pair(user_a, user_b)
+    async with _conn() as db:
+        cur = await db.execute(
+            """SELECT * FROM relationships WHERE status='active' AND rel_type=?
+               AND ((user1_id=? AND user2_id=?) OR (user1_id=? AND user2_id=?))""",
+            (rel_type, a, b, b, a),
+        )
+        return await cur.fetchone()
+
+
+async def list_relationships(user_id: int) -> list[aiosqlite.Row]:
+    async with _conn() as db:
+        cur = await db.execute(
+            "SELECT * FROM relationships WHERE status='active' AND (user1_id=? OR user2_id=?) ORDER BY id",
+            (user_id, user_id),
+        )
+        return await cur.fetchall()
+
+
+async def create_relationship(user_a: int, user_b: int, rel_type: str) -> int:
+    async with _conn() as db:
+        cur = await db.execute(
+            """INSERT INTO relationships (user1_id, user2_id, rel_type, blood_drops, status, started_at, last_activity_at)
+               VALUES (?, ?, ?, 0, 'active', ?, ?)""",
+            (user_a, user_b, rel_type, _now(), _now()),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def end_relationship(rel_id: int, reason: str) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "UPDATE relationships SET status='ended', ended_at=?, ended_reason=? WHERE id=?",
+            (_now(), reason, rel_id),
+        )
+        await db.commit()
+
+
+async def add_blood_drops(rel_id: int, amount: int, max_cap: int) -> int:
+    async with _conn() as db:
+        cur = await db.execute("SELECT blood_drops FROM relationships WHERE id=?", (rel_id,))
+        row = await cur.fetchone()
+        new_val = max(0, min(max_cap, row["blood_drops"] + amount))
+        await db.execute(
+            "UPDATE relationships SET blood_drops=?, last_activity_at=? WHERE id=?", (new_val, _now(), rel_id)
+        )
+        await db.commit()
+        return new_val
+
+
+async def stale_relationships(rel_type: str, days: int) -> list[aiosqlite.Row]:
+    threshold = (dt.datetime.utcnow() - dt.timedelta(days=days)).isoformat()
+    async with _conn() as db:
+        cur = await db.execute(
+            "SELECT * FROM relationships WHERE status='active' AND rel_type=? AND last_activity_at < ?",
+            (rel_type, threshold),
+        )
+        return await cur.fetchall()
+
+
+async def zero_blood_relationships() -> list[aiosqlite.Row]:
+    async with _conn() as db:
+        cur = await db.execute(
+            "SELECT * FROM relationships WHERE status='active' AND rel_type='relationship' AND blood_drops<=0"
+        )
+        return await cur.fetchall()
+
+
+# --------------------------------------------------------- rel. requests ----
+
+async def create_request(from_id: int, to_id: int, rel_type: str) -> int:
+    async with _conn() as db:
+        cur = await db.execute(
+            "INSERT INTO relationship_requests (from_id, to_id, rel_type, created_at, status) VALUES (?, ?, ?, ?, 'pending')",
+            (from_id, to_id, rel_type, _now()),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def get_request(req_id: int) -> aiosqlite.Row | None:
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM relationship_requests WHERE id=?", (req_id,))
+        return await cur.fetchone()
+
+
+async def set_request_status(req_id: int, status: str) -> None:
+    async with _conn() as db:
+        await db.execute("UPDATE relationship_requests SET status=? WHERE id=?", (status, req_id))
+        await db.commit()
+
+
+# --------------------------------------------------------- blood commands ----
+
+async def list_blood_commands() -> list[aiosqlite.Row]:
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM blood_commands WHERE enabled=1")
+        return await cur.fetchall()
+
+
+async def get_blood_command(trigger: str) -> aiosqlite.Row | None:
+    async with _conn() as db:
+        cur = await db.execute(
+            "SELECT * FROM blood_commands WHERE trigger=? COLLATE NOCASE AND enabled=1", (trigger,)
+        )
+        return await cur.fetchone()
+
+
+async def check_and_set_command_cooldown(command_id: int, user_a: int, user_b: int, cooldown_sec: int) -> bool:
+    """True если можно использовать (кд прошёл), заодно обновляет отметку времени."""
+    a, b = _pair(user_a, user_b)
+    key = f"{a}:{b}"
+    async with _conn() as db:
+        cur = await db.execute(
+            "SELECT last_used_at FROM blood_command_cooldowns WHERE command_id=? AND pair_key=?", (command_id, key)
+        )
+        row = await cur.fetchone()
+        if row and cooldown_sec > 0:
+            last = dt.datetime.fromisoformat(row["last_used_at"])
+            if (dt.datetime.utcnow() - last).total_seconds() < cooldown_sec:
+                return False
+        await db.execute(
+            "INSERT INTO blood_command_cooldowns (command_id, pair_key, last_used_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(command_id, pair_key) DO UPDATE SET last_used_at=excluded.last_used_at",
+            (command_id, key, _now()),
+        )
+        await db.commit()
+        return True
+
+
+# --------------------------------------------------------------- rules ----
+
+async def get_rules() -> aiosqlite.Row:
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM rules WHERE id=1")
+        return await cur.fetchone()
+
+
+async def mark_rules_broadcasted() -> None:
+    async with _conn() as db:
+        await db.execute("UPDATE rules SET broadcasted=1 WHERE id=1")
+        await db.commit()
+
+
+# -------------------------------------------------------------- admins ----
+
+async def is_admin(user_id: int) -> str | None:
+    async with _conn() as db:
+        cur = await db.execute("SELECT level FROM admins WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row["level"] if row else None
+
+
+async def list_admins() -> list[aiosqlite.Row]:
+    async with _conn() as db:
+        cur = await db.execute(
+            """SELECT admins.user_id, admins.level, users.username, users.first_name
+               FROM admins LEFT JOIN users ON users.user_id = admins.user_id
+               ORDER BY admins.level DESC"""
+        )
+        return await cur.fetchall()
+
+
+async def set_admin(user_id: int, level: str) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "INSERT INTO admins (user_id, level) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET level=excluded.level",
+            (user_id, level),
+        )
+        await db.commit()
+
+
+async def remove_admin(user_id: int) -> None:
+    async with _conn() as db:
+        await db.execute("DELETE FROM admins WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+# --------------------------------------------------------------- rules ----
+
+async def set_rules(text: str) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "UPDATE rules SET text=?, updated_at=?, broadcasted=0 WHERE id=1", (text, _now())
+        )
+        await db.commit()
+
+
+# ------------------------------------------------------- blood commands ----
+
+async def list_all_blood_commands() -> list[aiosqlite.Row]:
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM blood_commands ORDER BY id")
+        return await cur.fetchall()
+
+
+async def upsert_blood_command(trigger: str, template: str, amount: int, cooldown_sec: int, enabled: bool) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "INSERT INTO blood_commands (trigger, template, amount, cooldown_sec, enabled) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(trigger) DO UPDATE SET template=excluded.template, amount=excluded.amount, "
+            "cooldown_sec=excluded.cooldown_sec, enabled=excluded.enabled",
+            (trigger, template, amount, cooldown_sec, int(enabled)),
+        )
+        await db.commit()
+
+
+async def delete_blood_command(command_id: int) -> None:
+    async with _conn() as db:
+        await db.execute("DELETE FROM blood_commands WHERE id=?", (command_id,))
+        await db.commit()
+
+
+# --------------------------------------------------------------- search ----
+
+async def recent_mod_log(limit: int = 30) -> list[aiosqlite.Row]:
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM mod_log ORDER BY id DESC LIMIT ?", (limit,))
+        return await cur.fetchall()
+
+
+# ------------------------------------------------------------- mod log ----
+
+async def add_mod_log(user_id: int, action: str, reason: str, by_admin: int | None) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "INSERT INTO mod_log (user_id, action, reason, by_admin, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, action, reason, by_admin, _now()),
+        )
+        await db.commit()
+
+
+async def apply_warn(user_id: int, expires_in_days: int | None = None) -> int:
+    async with _conn() as db:
+        await db.execute("UPDATE users SET warns = warns + 1 WHERE user_id=?", (user_id,))
+        if expires_in_days:
+            expires_at = (dt.datetime.utcnow() + dt.timedelta(days=expires_in_days)).isoformat()
+            await db.execute(
+                "INSERT INTO warn_expiries (user_id, expires_at, processed) VALUES (?, ?, 0)",
+                (user_id, expires_at),
+            )
+        cur = await db.execute("SELECT warns FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        await db.commit()
+        return row["warns"] if row else 0
+
+
+async def process_expired_warns() -> list[int]:
+    """Снимает по одному варну за каждый истёкший warn_expiries. Возвращает user_id, с кого сняли."""
+    now = _now()
+    affected: list[int] = []
+    async with _conn() as db:
+        cur = await db.execute(
+            "SELECT id, user_id FROM warn_expiries WHERE processed=0 AND expires_at <= ?", (now,)
+        )
+        rows = await cur.fetchall()
+        for row in rows:
+            await db.execute("UPDATE users SET warns = MAX(0, warns - 1) WHERE user_id=?", (row["user_id"],))
+            await db.execute("UPDATE warn_expiries SET processed=1 WHERE id=?", (row["id"],))
+            affected.append(row["user_id"])
+        await db.commit()
+    return affected
+
+
+async def apply_mute(user_id: int, until: dt.datetime) -> None:
+    async with _conn() as db:
+        await db.execute("UPDATE users SET muted_until=? WHERE user_id=?", (until.isoformat(), user_id))
+        await db.commit()
+
+
+async def apply_ban(user_id: int) -> None:
+    async with _conn() as db:
+        await db.execute("UPDATE users SET banned=1 WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+async def enqueue_mod_action(user_id: int, action: str, duration_sec: int | None, reason: str, by_admin: int | None) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "INSERT INTO mod_queue (user_id, action, duration_sec, reason, by_admin, created_at, processed) "
+            "VALUES (?, ?, ?, ?, ?, ?, 0)",
+            (user_id, action, duration_sec, reason, by_admin, _now()),
+        )
+        await db.commit()
+
+
+async def fetch_mod_queue() -> list[aiosqlite.Row]:
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM mod_queue WHERE processed=0 ORDER BY id")
+        return await cur.fetchall()
+
+
+async def mark_mod_queue_done(item_id: int) -> None:
+    async with _conn() as db:
+        await db.execute("UPDATE mod_queue SET processed=1 WHERE id=?", (item_id,))
+        await db.commit()

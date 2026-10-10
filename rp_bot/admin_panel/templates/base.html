@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Админ-панель{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  {% if request.session.get('authed') %}
+  <div class="sidebar">
+    <div class="brand"><span class="drop">◆</span> Кровь &amp; Чат</div>
+    <nav class="nav">
+      <a href="/">Обзор</a>
+      <a href="/user">Пользователь</a>
+      <a href="/rules">Правила</a>
+      <a href="/commands">RP-команды</a>
+      <a href="/admins">Администраторы</a>
+      <a href="/logout">Выйти</a>
+    </nav>
+  </div>
+  {% endif %}
+  <div class="main">
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

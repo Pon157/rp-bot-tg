@@ -1,0 +1,168 @@
+"""
+Веб-панель для старшей администрации.
+
+Запуск отдельно от бота (использует ту же базу sqlite):
+    uvicorn admin_panel.app:app --host 0.0.0.0 --port 8080
+
+Доступ:
+- по желанию ограничивается списком IP (ADMIN_PANEL_ALLOWED_IPS в .env) —
+  тогда «просто подключаться по IP сервера» и есть контроль доступа;
+- плюс отдельный секретный код входа (ADMIN_PANEL_SECRET), чтобы страницу
+  нельзя было дёргать вслепую, даже если она открыта в интернет.
+
+Технически это самый обычный сайт (Jinja2 + формы), а не Telegram Mini App —
+как и предполагалось в ТЗ ("можно даже не мини аппой"). При желании его легко
+завернуть в Telegram WebApp позже, подключив telegram-web-app.js и проверку
+initData — в коде оставлен соответствующий комментарий в login().
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
+
+from bot import repo
+from bot.config import settings
+
+BASE_DIR = Path(__file__).resolve().parent
+
+app = FastAPI(title="RP Bot — Админ-панель")
+app.add_middleware(SessionMiddleware, secret_key=settings.admin_panel_secret)
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+@app.middleware("http")
+async def ip_allowlist(request: Request, call_next):
+    if settings.admin_panel_allowed_ips:
+        client_ip = request.client.host if request.client else ""
+        if client_ip not in settings.admin_panel_allowed_ips:
+            raise HTTPException(status_code=403, detail="IP не в белом списке")
+    return await call_next(request)
+
+
+def require_login(request: Request) -> RedirectResponse | None:
+    if not request.session.get("authed"):
+        return RedirectResponse("/login", status_code=303)
+    return None
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_form(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+
+
+@app.post("/login")
+async def login(request: Request, secret: str = Form(...)):
+    # Примечание: если панель встраивается как Telegram Mini App, здесь вместо
+    # секретного кода стоит проверять initData (hash) и user.id из Telegram,
+    # сверяя его со списком в таблице admins.
+    if secret != settings.admin_panel_secret:
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Неверный код доступа"})
+    request.session["authed"] = True
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=303)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    if (r := require_login(request)):
+        return r
+    log = await repo.recent_mod_log(30)
+    return templates.TemplateResponse("dashboard.html", {"request": request, "log": log})
+
+
+@app.get("/user", response_class=HTMLResponse)
+async def user_search(request: Request, q: str = ""):
+    if (r := require_login(request)):
+        return r
+    row = None
+    if q:
+        row = await repo.get_user_by_username(q) if not q.lstrip("-").isdigit() else await repo.get_user(int(q))
+    return templates.TemplateResponse("user.html", {"request": request, "q": q, "user": row})
+
+
+@app.post("/user/{user_id}/action")
+async def user_action(request: Request, user_id: int, action: str = Form(...),
+                       reason: str = Form(""), duration_hours: float = Form(1.0)):
+    if (r := require_login(request)):
+        return r
+    duration_sec = int(duration_hours * 3600) if action == "mute" else None
+    await repo.enqueue_mod_action(user_id, action, duration_sec, reason, by_admin=None)
+    return RedirectResponse(f"/user?q={user_id}", status_code=303)
+
+
+@app.get("/rules", response_class=HTMLResponse)
+async def rules_page(request: Request):
+    if (r := require_login(request)):
+        return r
+    rules = await repo.get_rules()
+    return templates.TemplateResponse("rules.html", {"request": request, "rules": rules})
+
+
+@app.post("/rules")
+async def rules_update(request: Request, text: str = Form(...)):
+    if (r := require_login(request)):
+        return r
+    await repo.set_rules(text)
+    return RedirectResponse("/rules", status_code=303)
+
+
+@app.get("/commands", response_class=HTMLResponse)
+async def commands_page(request: Request):
+    if (r := require_login(request)):
+        return r
+    cmds = await repo.list_all_blood_commands()
+    return templates.TemplateResponse("commands.html", {"request": request, "commands": cmds})
+
+
+@app.post("/commands")
+async def commands_upsert(
+    request: Request, trigger: str = Form(...), template: str = Form(""),
+    amount: int = Form(10), cooldown_sec: int = Form(0), enabled: str = Form("on"),
+):
+    if (r := require_login(request)):
+        return r
+    await repo.upsert_blood_command(trigger.strip().casefold(), template, amount, cooldown_sec, enabled == "on")
+    return RedirectResponse("/commands", status_code=303)
+
+
+@app.post("/commands/{command_id}/delete")
+async def commands_delete(request: Request, command_id: int):
+    if (r := require_login(request)):
+        return r
+    await repo.delete_blood_command(command_id)
+    return RedirectResponse("/commands", status_code=303)
+
+
+@app.get("/admins", response_class=HTMLResponse)
+async def admins_page(request: Request):
+    if (r := require_login(request)):
+        return r
+    admins = await repo.list_admins()
+    return templates.TemplateResponse("admins.html", {"request": request, "admins": admins})
+
+
+@app.post("/admins")
+async def admins_add(request: Request, user_id: int = Form(...), level: str = Form("admin")):
+    if (r := require_login(request)):
+        return r
+    await repo.set_admin(user_id, level)
+    return RedirectResponse("/admins", status_code=303)
+
+
+@app.post("/admins/{user_id}/delete")
+async def admins_remove(request: Request, user_id: int):
+    if (r := require_login(request)):
+        return r
+    await repo.remove_admin(user_id)
+    return RedirectResponse("/admins", status_code=303)

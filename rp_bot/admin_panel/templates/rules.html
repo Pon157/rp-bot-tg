@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Правила{% endblock %}
+{% block content %}
+<h1>Правила чата</h1>
+<div class="panel">
+  <form method="post" action="/rules">
+    <label>Текст правил (поддерживается HTML-разметка Telegram: &lt;b&gt;, &lt;i&gt;, ссылки и т.д.)</label>
+    <textarea name="text">{{ rules['text'] }}</textarea>
+    <button type="submit">Сохранить и отправить в чат</button>
+  </form>
+  <p class="muted">После сохранения бот автоматически опубликует обновлённые правила в чате.</p>
+</div>
+{% endblock %}

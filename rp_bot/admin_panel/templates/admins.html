@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Администраторы{% endblock %}
+{% block content %}
+<h1>Администраторы</h1>
+<div class="panel">
+  <h2>Назначить</h2>
+  <form method="post" action="/admins">
+    <label>Telegram ID пользователя</label>
+    <input type="number" name="user_id" required>
+    <label>Уровень</label>
+    <select name="level">
+      <option value="admin">Админ</option>
+      <option value="senior">Старший админ (доступ к панели)</option>
+    </select>
+    <button type="submit">Назначить</button>
+  </form>
+  <p class="muted">Узнать ID можно, попросив человека написать в чат и открыв его через поиск на странице «Пользователь»,
+  либо через любого @userinfobot.</p>
+</div>
+
+<div class="panel">
+  <h2>Текущий список</h2>
+  {% if admins %}
+  <table>
+    <tr><th>ID</th><th>Юзернейм</th><th>Уровень</th><th></th></tr>
+    {% for a in admins %}
+    <tr>
+      <td>{{ a['user_id'] }}</td>
+      <td>@{{ a['username'] or '—' }}</td>
+      <td>{{ a['level'] }}</td>
+      <td>
+        <form class="inline" method="post" action="/admins/{{ a['user_id'] }}/delete">
+          <button type="submit" class="secondary">снять</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">Пока никто не назначен.</p>
+  {% endif %}
+</div>
+{% endblock %}

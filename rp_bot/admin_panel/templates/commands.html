@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}RP-команды{% endblock %}
+{% block content %}
+<h1>RP-команды и пополнение капель крови</h1>
+<p class="muted">Например: триггер «свидание», шаблон «{1} пригласил {2} на свидание», +40 капель, кд 2 часа (7200 сек).
+Плейсхолдеры {1} и {2} — автор команды и упомянутый/тот, кому ответили.</p>
+
+<div class="panel">
+  <h2>Добавить / изменить команду</h2>
+  <form method="post" action="/commands">
+    <label>Триггер (слово команды, без пробелов)</label>
+    <input type="text" name="trigger" placeholder="свидание" required>
+    <label>RP-шаблон</label>
+    <input type="text" name="template" placeholder="{1} пригласил {2} на свидание">
+    <label>Капель крови за использование</label>
+    <input type="number" name="amount" value="10">
+    <label>Кулдаун, секунды (0 = без кулдауна)</label>
+    <input type="number" name="cooldown_sec" value="0">
+    <label><input type="checkbox" name="enabled" checked style="width:auto;display:inline-block"> включена</label>
+    <button type="submit">Сохранить</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h2>Существующие команды</h2>
+  {% if commands %}
+  <table>
+    <tr><th>Триггер</th><th>Шаблон</th><th>Кап.крови</th><th>КД, сек</th><th>Вкл.</th><th></th></tr>
+    {% for c in commands %}
+    <tr>
+      <td>{{ c['trigger'] }}</td>
+      <td>{{ c['template'] }}</td>
+      <td>{{ c['amount'] }}</td>
+      <td>{{ c['cooldown_sec'] }}</td>
+      <td>{{ 'да' if c['enabled'] else 'нет' }}</td>
+      <td>
+        <form class="inline" method="post" action="/commands/{{ c['id'] }}/delete">
+          <button type="submit" class="secondary">удалить</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">Команд пока нет.</p>
+  {% endif %}
+</div>
+{% endblock %}
