@@ -1,21 +1,11 @@
 """
 Премиум-эмодзи (custom emoji) из пака PrimaMedia.
 
-ВАЖНО, ограничение самой платформы Telegram (не бота):
-- В ТЕКСТЕ сообщений premium/custom emoji работают: Bot API поддерживает тег
-  <tg-emoji emoji-id="...">fallback</tg-emoji> при parse_mode="HTML". Именно
-  так это сделано ниже в функции e().
-- В КНОПКАХ (InlineKeyboardButton.text) Telegram НЕ поддерживает entities/custom
-  emoji вообще — это обычная строка без форматирования. Это ограничение Bot API,
-  обойти его нельзя. На кнопках ниже стоят обычные юникод-эмодзи (максимально
-  похожие по смыслу на нужный кастомный), чтобы кнопки не выглядели пустыми.
-  Если для вас критично видеть именно кастомные эмодзи на кнопках — единственный
-  обходной путь, который использует Telegram сам, это WebApp-кнопки с картинкой/
-  html внутри мини-аппа, а не нативная inline-кнопка.
+- В ТЕКСТЕ сообщений: тег <tg-emoji emoji-id="...">fallback</tg-emoji> (parse_mode HTML), функция e().
+- На КНОПКАХ: поле icon_custom_emoji_id у InlineKeyboardButton, функция ibtn() в bot/utils/buttons.py.
+  Подпись кнопки при этом без юникода, иконка выводится слева от неё.
 
-Каждая запись ниже — смысловое имя -> (custom_emoji_id, юникод-заглушка).
-Юникод-заглушка обязательна для tg-emoji (это то, что увидят клиенты без
-поддержки custom emoji, и то, что телеграм требует передавать внутри тега).
+Каждая запись: смысловое имя -> (custom_emoji_id, юникод-заглушка для клиентов без поддержки).
 """
 from __future__ import annotations
 
@@ -57,10 +47,9 @@ EMOJI: dict[str, tuple[str, str]] = {
     "tree": ("5424742337085462827", "🎄"),
     "poop": ("5310250934314484119", "💩"),
     "thumbsup": ("5309901435645737261", "👍"),
+    "music": ("5309749965034110362", "🎵"),
 }
 
-# fallback-юникод-версии тех же смыслов для КНОПОК (entities там не работают)
-BTN: dict[str, str] = {name: pair[1] for name, pair in EMOJI.items()}
 
 
 def e(name: str) -> str:
@@ -68,7 +57,3 @@ def e(name: str) -> str:
     emoji_id, fallback = EMOJI[name]
     return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
 
-
-def btn(name: str) -> str:
-    """Вернуть обычный юникод-эмодзи для текста inline-кнопки."""
-    return BTN[name]

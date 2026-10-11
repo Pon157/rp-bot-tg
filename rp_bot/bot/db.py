@@ -150,6 +150,14 @@ CREATE TABLE IF NOT EXISTS reports (
     post_message_id INTEGER
 );
 
+-- где лежит копия репорта у каждого модератора (личка) — нужно, чтобы обновить их все после решения
+CREATE TABLE IF NOT EXISTS report_deliveries (
+    report_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    PRIMARY KEY (report_id, chat_id, message_id)
+);
+
 CREATE TABLE IF NOT EXISTS mod_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,

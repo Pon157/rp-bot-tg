@@ -6,6 +6,7 @@ import time
 
 from aiogram import Router, F, Bot
 from aiogram.filters import BaseFilter
+from bot.utils.buttons import ibtn
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import repo
@@ -54,8 +55,8 @@ async def _send_request(message: Message, rel_type: str, word_pattern: str) -> N
 
     req_id = await repo.create_request(sender.id, target.id, rel_type)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✔️ Принять", callback_data=f"rel:accept:{req_id}"),
-        InlineKeyboardButton(text="✖️ Отклонить", callback_data=f"rel:decline:{req_id}"),
+        ibtn("Принять", "check", callback_data=f"rel:accept:{req_id}"),
+        ibtn("Отклонить", "alert", callback_data=f"rel:decline:{req_id}"),
     ]])
     verb = "предлагает отношения" if rel_type == "relationship" else "предлагает заключить брак по расчету"
     await message.answer(f"{e('heart')} {mention(sender)} {verb} {mention(target)}!", reply_markup=kb)
@@ -124,7 +125,7 @@ async def dissolve(message: Message) -> None:
         )
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=REL_LABEL[r["rel_type"]], callback_data=f"rel:end:{r['id']}:{message.from_user.id}")]
+        [ibtn(REL_LABEL[r["rel_type"]], "heart", callback_data=f"rel:end:{r['id']}:{message.from_user.id}")]
         for r in rels
     ])
     await message.reply("У вас с этим человеком несколько связей, что расторгнуть?", reply_markup=kb)

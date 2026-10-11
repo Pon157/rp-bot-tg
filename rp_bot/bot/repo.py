@@ -669,3 +669,27 @@ async def set_rich_pref(user_id: int, value: bool) -> None:
             (user_id, int(value)),
         )
         await db.commit()
+
+
+# ------------------------------------------------ доставка репортов модераторам ----
+
+async def admin_user_ids() -> list[int]:
+    """Назначенные в панели модераторы (таблица admins)."""
+    async with _conn() as db:
+        cur = await db.execute("SELECT user_id FROM admins")
+        return [r["user_id"] for r in await cur.fetchall()]
+
+
+async def add_report_delivery(report_id: int, chat_id: int, message_id: int) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO report_deliveries (report_id, chat_id, message_id) VALUES (?, ?, ?)",
+            (report_id, chat_id, message_id),
+        )
+        await db.commit()
+
+
+async def list_report_deliveries(report_id: int) -> list:
+    async with _conn() as db:
+        cur = await db.execute("SELECT chat_id, message_id FROM report_deliveries WHERE report_id=?", (report_id,))
+        return await cur.fetchall()

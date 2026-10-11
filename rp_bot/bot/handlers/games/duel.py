@@ -4,6 +4,7 @@ import random
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramAPIError
+from bot.utils.buttons import ibtn
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.emojis import e
@@ -22,9 +23,9 @@ MAX_STACKS = 3
 
 def _duel_kb(cid: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🎯 Прицелиться", callback_data=f"duel:aim:{cid}"),
-        InlineKeyboardButton(text="🔫 Выстрелить", callback_data=f"duel:shoot:{cid}"),
-        InlineKeyboardButton(text="💨 Сбить прицел", callback_data=f"duel:knock:{cid}"),
+        ibtn("Прицелиться", "search", callback_data=f"duel:aim:{cid}"),
+        ibtn("Выстрелить", "gun", callback_data=f"duel:shoot:{cid}"),
+        ibtn("Сбить прицел", "lightning", callback_data=f"duel:knock:{cid}"),
     ]])
 
 
@@ -40,8 +41,8 @@ async def duel_start(message: Message) -> None:
     # дуэль без ставки — на наказание; сначала вызывающий выбирает какое
     me = message.from_user.id
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🔇 Мут на час", callback_data=f"duel:pick_mute:{opponent.id}:{me}"),
-        InlineKeyboardButton(text="⚠️ Варн на неделю", callback_data=f"duel:pick_warn:{opponent.id}:{me}"),
+        ibtn("Мут на час", "chain", callback_data=f"duel:pick_mute:{opponent.id}:{me}"),
+        ibtn("Варн на неделю", "warn", callback_data=f"duel:pick_warn:{opponent.id}:{me}"),
     ]])
     await message.reply("Выбери наказание для проигравшего (решает тот, кто вызывает на дуэль):", reply_markup=kb)
 
@@ -75,8 +76,8 @@ async def duel_pick_warn(call: CallbackQuery) -> None:
 async def _announce_duel(message: Message, challenger, opponent, stake_coins: int, punishment: str | None) -> None:
     ch = new_challenge("duel", challenger, opponent, message.chat.id, stake_coins=stake_coins, punishment=punishment)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✔️ Принять", callback_data=f"duel:accept:{ch.id}"),
-        InlineKeyboardButton(text="✖️ Отклонить", callback_data=f"duel:decline:{ch.id}"),
+        ibtn("Принять", "check", callback_data=f"duel:accept:{ch.id}"),
+        ibtn("Отклонить", "alert", callback_data=f"duel:decline:{ch.id}"),
     ]])
     await message.answer(
         f"{e('gun')} {mention(challenger)} вызывает {mention(opponent)} на дуэль, {stake_text(stake_coins, punishment)}!",

@@ -6,6 +6,7 @@ import random
 import re
 from dataclasses import dataclass, field
 
+from bot.utils.buttons import ibtn
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import repo
@@ -119,13 +120,13 @@ async def take_both_stakes(ch: Challenge, message: Message) -> bool:
 
 # ---------------- «прогрессивные» игры: монеточка и пианино ----------------
 
-def progressive_keyboard(cid: int, prefix: str, button_label: str) -> InlineKeyboardMarkup:
+def progressive_keyboard(cid: int, prefix: str, button_label: str, icon: str = "fire") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=button_label, callback_data=f"{prefix}:press:{cid}")
+        ibtn(button_label, icon, callback_data=f"{prefix}:press:{cid}")
     ]])
 
 
-async def handle_progressive_press(prefix: str, call, button_label: str) -> None:
+async def handle_progressive_press(prefix: str, call, button_label: str, icon: str = "fire") -> None:
     """Ходят по очереди; каждое нажатие поднимает шанс, что соперник сдастся прямо сейчас."""
     ch = get_challenge(int(call.data.split(":")[2]))
     if ch is None:
@@ -155,6 +156,6 @@ async def handle_progressive_press(prefix: str, call, button_label: str) -> None
     await call.message.edit_text(
         f"{e('fire')} {mention(presser)} жмёт «{button_label}»... {mention(other)} держится! "
         f"({presses} попытка, шанс сдаться уже {give_up_chance}%)\nХод: {mention(other)}",
-        reply_markup=progressive_keyboard(ch.id, prefix, button_label),
+        reply_markup=progressive_keyboard(ch.id, prefix, button_label, icon),
     )
     await call.answer()

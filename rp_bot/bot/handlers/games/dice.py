@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from aiogram import F, Router
+from bot.utils.buttons import ibtn
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import repo
@@ -24,8 +25,8 @@ async def dice_challenge(message: Message) -> None:
     ch = new_challenge("dice", message.from_user, opponent, message.chat.id, stake_coins=stake,
                        punishment=None if stake else "mute_1h")
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✔️ Принять", callback_data=f"dice:accept:{ch.id}"),
-        InlineKeyboardButton(text="✖️ Отклонить", callback_data=f"dice:decline:{ch.id}"),
+        ibtn("Принять", "check", callback_data=f"dice:accept:{ch.id}"),
+        ibtn("Отклонить", "alert", callback_data=f"dice:decline:{ch.id}"),
     ]])
     await message.answer(
         f"{e('fire')} {mention(message.from_user)} вызывает {mention(opponent)} на кости, {stake_text(stake)}!",

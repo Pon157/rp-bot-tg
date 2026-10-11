@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from aiogram import F, Router
+from bot.utils.buttons import ibtn
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.emojis import e
@@ -12,7 +13,7 @@ from .common import (
 )
 
 
-def build_router(*, name: str, word: str, prefix: str, button_label: str, title: str) -> Router:
+def build_router(*, name: str, word: str, prefix: str, button_label: str, title: str, icon: str) -> Router:
     router = Router(name=f"game_{name}")
 
     @router.message(F.text.regexp(rf"(?i)^{word}\b"))
@@ -24,8 +25,8 @@ def build_router(*, name: str, word: str, prefix: str, button_label: str, title:
         ch = new_challenge(name, message.from_user, opponent, message.chat.id, stake_coins=stake,
                            punishment=None if stake else "mute_1h")
         kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="✔️ Принять", callback_data=f"{prefix}:accept:{ch.id}"),
-            InlineKeyboardButton(text="✖️ Отклонить", callback_data=f"{prefix}:decline:{ch.id}"),
+            ibtn("Принять", "check", callback_data=f"{prefix}:accept:{ch.id}"),
+            ibtn("Отклонить", "alert", callback_data=f"{prefix}:decline:{ch.id}"),
         ]])
         await message.answer(
             f"{e('fire')} {mention(message.from_user)} вызывает {mention(opponent)} на {title}, "
@@ -54,12 +55,12 @@ def build_router(*, name: str, word: str, prefix: str, button_label: str, title:
         ch.progress["turn_id"] = ch.challenger.id
         await call.message.edit_text(
             f"{e('fire')} Игра началась! Ход: {mention(ch.challenger)}",
-            reply_markup=progressive_keyboard(ch.id, prefix, button_label),
+            reply_markup=progressive_keyboard(ch.id, prefix, button_label, icon),
         )
         await call.answer()
 
     @router.callback_query(F.data.startswith(f"{prefix}:press:"))
     async def press(call: CallbackQuery) -> None:
-        await handle_progressive_press(prefix, call, button_label)
+        await handle_progressive_press(prefix, call, button_label, icon)
 
     return router
