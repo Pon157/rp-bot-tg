@@ -196,6 +196,8 @@ DEFAULT_RP = [
 async def init_db() -> None:
     Path(settings.db_path).parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(settings.db_path) as db:
+        # WAL: чтение и запись из разных соединений (бот + панель) не блокируют друг друга
+        await db.execute("PRAGMA journal_mode=WAL")
         await db.executescript(SCHEMA)
         await db.execute(
             "INSERT OR IGNORE INTO rules (id, text, broadcasted) VALUES (1, 'Правила ещё не заданы.', 1)"

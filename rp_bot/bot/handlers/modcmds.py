@@ -208,22 +208,45 @@ async def cmd_mutes(message: Message) -> None:
                       lambda r: _with_reason(until(r), reasons.get(r["user_id"])))
 
 
-@router.message(F.text.casefold() == "баны")
+@router.message(F.text.regexp(r"(?i)^баны\b"))
 async def cmd_bans(message: Message) -> None:
+    """Без аргумента — список забаненных и отложенных. С @ником/ID — статус конкретного человека."""
     is_mod, _ = await _moderator(message)
     if not is_mod:
         return
+    args = (message.text or "")[len("баны"):].strip()
+    if args:
+        target, _ = await target_and_rest(message, args)
+        if target is None:
+            await reply_rich(message, f"{e('info')} Укажите @ник или ID: <code>баны 123456789</code>")
+            return
+        row = await repo.get_user(target.id)
+        pending = any(p["user_id"] == target.id for p in await repo.list_pending_bans())
+        banned = bool(row and row["banned"])
+        if banned:
+            status = "забанен"
+        elif pending:
+            status = "бан в очереди — применится, когда Telegram его увидит"
+        else:
+            status = "не забанен"
+        name = (await nicks([target.id]))[target.id]
+        await reply_rich(message, f"{e('skull')} <b>Статус бана</b> · {name}\n" + quote(status))
+        return
+
     rows = await repo.list_banned()
     reasons = await repo.last_reasons([r["user_id"] for r in rows], "ban")
-    await _list_users(message, rows, "Забанены", "skull",
-                      lambda r: _with_reason("навсегда", reasons.get(r["user_id"])))
+    if rows:
+        await _list_users(message, rows, "Забанены", "skull",
+                          lambda r: _with_reason("навсегда", reasons.get(r["user_id"])))
+    else:
+        await reply_rich(message, f"{e('check')} Забанены: никого нет.")
 
     pending = await repo.list_pending_bans()
     if pending:
         names = await nicks([p["user_id"] for p in pending])
-        lines = [
-            f"{i}. {names[p['user_id']]} — ждёт, пока Telegram его увидит"
-            + (f" · причина: {p['reason']}" if p["reason"] else "")
-            for i, p in enumerate(pending, 1)
-        ]
-        await reply_rich(message, f"{e('info')} <b>Бан в очереди</b> · {len(pending)}\n" + quote("\n".join(lines)))
+        table_rows = [[str(i), names[p["user_id"]], p["reason"] or "—"] for i, p in enumerate(pending, 1)]
+        head = f"{e('info')} <b>Бан в очереди</b> · {len(pending)} — применится, когда Telegram их увидит\n"
+        await reply_rich(
+            message, head + rtable(["№", "Участник", "Причина"], table_rows, align=["right", "left", "left"]),
+            fallback=head + quote("\n".join(f"{r[0]}. {r[1]} — {r[2]}" for r in table_rows)),
+        )

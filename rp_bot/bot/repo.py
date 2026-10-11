@@ -28,7 +28,8 @@ class _ConnCtx:
         self._db: aiosqlite.Connection | None = None
 
     async def __aenter__(self) -> aiosqlite.Connection:
-        self._db = await aiosqlite.connect(DB_PATH)
+        # timeout: ждём освобождения базы до 10 с (бот и панель пишут в один файл)
+        self._db = await aiosqlite.connect(DB_PATH, timeout=10)
         self._db.row_factory = aiosqlite.Row
         return self._db
 

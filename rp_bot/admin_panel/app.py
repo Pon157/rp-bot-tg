@@ -259,6 +259,28 @@ async def rp_upsert(request: Request, trigger: str = Form(...), template: str = 
     return RedirectResponse("/rp", status_code=303)
 
 
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, saved: str = ""):
+    if (r := require_login(request)):
+        return r
+    values = {
+        "amount": await repo.get_meta("blood_decay_amount", "0"),
+        "hours": await repo.get_meta("blood_decay_hours", "24"),
+    }
+    return templates.TemplateResponse("settings.html", {"request": request, "values": values, "saved": saved})
+
+
+@app.post("/settings")
+async def settings_save(request: Request, blood_decay_amount: int = Form(0), blood_decay_hours: float = Form(24)):
+    if (r := require_login(request)):
+        return r
+    if blood_decay_amount < 0 or blood_decay_hours <= 0:
+        raise HTTPException(status_code=400, detail="Капли не могут быть отрицательными, период больше нуля")
+    await repo.set_meta("blood_decay_amount", str(blood_decay_amount))
+    await repo.set_meta("blood_decay_hours", str(blood_decay_hours))
+    return RedirectResponse("/settings?saved=1", status_code=303)
+
+
 @app.post("/rp/{command_id}/delete")
 async def rp_delete(request: Request, command_id: int):
     if (r := require_login(request)):
