@@ -117,16 +117,19 @@ async def create_report(message: Message) -> None:
     card = render_report(row, names[me.id], names[target.id])
 
     delivered = 0
+    failed: list[int] = []
     recipients = await _moderator_ids(message.bot, exclude={me.id, target.id})
+    logger.info("Репорт #%s: получатели %s", report_id, recipients or "никто")
     for uid in recipients:
         try:
             sent = await message.bot.send_message(uid, card, reply_markup=_keyboard(report_id),
                                                   disable_web_page_preview=True)
             await repo.add_report_delivery(report_id, sent.chat.id, sent.message_id)
             delivered += 1
-        except TelegramAPIError:
-            # модератор не нажимал /start у бота, заблокировал его или сам вышел — это не ошибка
-            logger.info("Репорт #%s: не удалось написать модератору %s (нужен /start боту)", report_id, uid)
+        except TelegramAPIError as exc:
+            # чаще всего: модератор не нажимал /start у этого бота или заблокировал его
+            logger.warning("Репорт #%s: модератору %s не доставлено: %s", report_id, uid, exc)
+            failed.append(uid)
 
     fallback_note = ""
     if delivered == 0 and reports_chat() != settings.allowed_chat_id:
@@ -138,12 +141,19 @@ async def create_report(message: Message) -> None:
         fallback_note = ""
         logger.warning("Репорт #%s: ни одному модератору не удалось написать", report_id)
 
+    if not recipients:
+        note = "Модераторов не нашлось: в чате нет админов и никто не назначен в панели."
+    elif failed:
+        names = await nicks(failed)
+        note = ("Не дошло до: " + ", ".join(names[u] for u in failed) +
+                ". Этим модераторам нужно открыть бота и нажать /start.")
+    else:
+        note = ""
     if delivered:
-        await reply_rich(message, f"{e('check')} Репорт <b>#{report_id}</b> отправлен модераторам{fallback_note}.")
+        await reply_rich(message, f"{e('check')} Репорт <b>#{report_id}</b> отправлен модераторам{fallback_note}.\n{note}".rstrip())
     else:
         await reply_rich(
-            message, f"{e('warn')} Репорт <b>#{report_id}</b> сохранён, но модераторам сейчас не удалось написать. "
-            "Пусть модераторы нажмут /start у бота, чтобы получать репорты."
+            message, f"{e('warn')} Репорт <b>#{report_id}</b> сохранён, но модераторам сейчас не удалось написать.\n{note}"
         )
 
 
