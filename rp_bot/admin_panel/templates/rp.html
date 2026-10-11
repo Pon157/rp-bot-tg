@@ -2,18 +2,24 @@
 {% block title %}RP-команды{% endblock %}
 {% block content %}
 <h1>RP-команды (без наград)</h1>
-<p class="muted">Работают между любыми участниками, отношения не нужны, ничего не начисляют: «ударить», «обнять» и т.д.
-В шаблоне обязательны <b>{1}</b> (автор) и <b>{2}</b> (цель). Можно вставить премиум-эмодзи: <b>{e:fire}</b>, <b>{e:heart}</b>, <b>{e:skull}</b>
-(имена — из bot/emojis.py). HTML в шаблоне не обрабатывается, он экранируется. В триггере можно несколько слов («дать пять»).
-Изменения подхватываются ботом в течение ~15 секунд. Слова встроенных команд (бан, мут, кости…) использовать нельзя.</p>
+<p class="muted">Работают между любыми участниками, отношения не нужны, ничего не начисляют.
+Два вида:
+<br><b>Простая</b> — один шаблон: «ударить» → <code>{1} ударил {2}</code>.
+<br><b>Комплексная</b> — несколько вариантов, по одному на строку. Бот выбирает один случайно.
+Пример: «выйти погулять» → <code>{1} вышел погулять во двор с {2}</code>, <code>{1} вышел погулять в магазин с {2}</code>,
+<code>{1} вышел погулять в кино с {2}</code>.
+В каждом варианте обязательны <b>{1}</b> (автор) и <b>{2}</b> (цель). Можно <b>{e:fire}</b>, <b>{e:heart}</b> и т.п.
+Изменения подхватываются ботом в течение ~15 секунд. Слова встроенных команд использовать нельзя.</p>
 
 <div class="panel">
   <h2>Добавить / изменить</h2>
   <form method="post" action="/rp">
-    <label>Триггер</label>
-    <input type="text" name="trigger" placeholder="ударить" required>
-    <label>Шаблон</label>
-    <input type="text" name="template" placeholder="{1} ударил {2}" required>
+    <label>Триггер (можно из нескольких слов)</label>
+    <input type="text" name="trigger" placeholder="выйти погулять" required>
+    <label>Простой шаблон (если вариантов нет)</label>
+    <input type="text" name="template" placeholder="{1} ударил {2}">
+    <label>Варианты для случайного выбора, по одному на строку (необязательно)</label>
+    <textarea name="variants" placeholder="{1} вышел погулять во двор с {2}&#10;{1} вышел погулять в магазин с {2}&#10;{1} вышел погулять в кино с {2}"></textarea>
     <label><input type="checkbox" name="enabled" checked style="width:auto;display:inline-block"> включена</label>
     <button type="submit">Сохранить</button>
   </form>
@@ -23,10 +29,13 @@
   <h2>Список</h2>
   {% if commands %}
   <table>
-    <tr><th>Триггер</th><th>Шаблон</th><th>Вкл.</th><th></th></tr>
+    <tr><th>Триггер</th><th>Тип</th><th>Варианты</th><th>Вкл.</th><th></th></tr>
     {% for c in commands %}
     <tr>
-      <td>{{ c['trigger'] }}</td><td>{{ c['template'] }}</td><td>{{ 'да' if c['enabled'] else 'нет' }}</td>
+      <td>{{ c['trigger'] }}</td>
+      <td>{{ 'комплексная' if c['variants'] else 'простая' }}</td>
+      <td>{{ (c['variants'] or c['template'])|replace('\n', ' | ') }}</td>
+      <td>{{ 'да' if c['enabled'] else 'нет' }}</td>
       <td><form class="inline" method="post" action="/rp/{{ c['id'] }}/delete"><button type="submit" class="secondary">удалить</button></form></td>
     </tr>
     {% endfor %}

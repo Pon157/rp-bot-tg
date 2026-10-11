@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 import time
 
@@ -289,4 +290,33 @@ async def auto_dissolve_loop(bot: Bot, poll_seconds: int = 3600) -> None:
                     )
         except Exception:
             logger.exception("Ошибка в auto_dissolve_loop")
+        await asyncio.sleep(poll_seconds)
+
+
+async def blood_decay_loop(bot: Bot, poll_seconds: int = 60) -> None:
+    """Списание капель крови со временем. Настраивается в админ-панели (раздел «Настройки»):
+    blood_decay_amount — сколько капель уходит, blood_decay_hours — за какой период.
+    Если капли дошли до 0, отношения расторгаются и бот сообщает об этом в чат."""
+    while True:
+        try:
+            amount = int(await repo.get_meta("blood_decay_amount", "0") or 0)
+            hours = float(await repo.get_meta("blood_decay_hours", "24") or 24)
+            last_raw = await repo.get_meta("blood_decay_last")
+            now = dt.datetime.utcnow()
+            if amount > 0 and hours > 0:
+                if last_raw is None:
+                    await repo.set_meta("blood_decay_last", now.isoformat())  # первый запуск: отсчёт с этого момента
+                elif (now - dt.datetime.fromisoformat(last_raw)).total_seconds() >= hours * 3600:
+                    await repo.decay_blood(amount)
+                    await repo.set_meta("blood_decay_last", now.isoformat())
+                    for rel in await repo.zero_blood_relationships():
+                        await repo.end_relationship(rel["id"], "zero_blood")
+                        names = await nicks([rel["user1_id"], rel["user2_id"]])
+                        await bot.send_message(
+                            settings.allowed_chat_id,
+                            f"{e('alert')} Отношения {names[rel['user1_id']]} и {names[rel['user2_id']]} "
+                            f"закончились — капли крови ушли в ноль.",
+                        )
+        except Exception:
+            logger.exception("Ошибка в blood_decay_loop")
         await asyncio.sleep(poll_seconds)

@@ -12,7 +12,7 @@ from bot.db import init_db
 from bot.handlers import root_router
 from bot.middlewares import ChatGuardMiddleware, ActivityMiddleware, MyChatMemberGuard
 from bot.handlers.rules import rules_broadcast_loop
-from bot.handlers.relationships import auto_dissolve_loop
+from bot.handlers.relationships import auto_dissolve_loop, blood_decay_loop
 from bot.moderation import mod_queue_loop, warn_expiry_loop
 from bot.panel import start_panel, stop_panel
 
@@ -43,6 +43,7 @@ async def main() -> None:
     background_tasks = [
         asyncio.create_task(rules_broadcast_loop(bot)),
         asyncio.create_task(auto_dissolve_loop(bot)),
+        asyncio.create_task(blood_decay_loop(bot)),
         asyncio.create_task(mod_queue_loop(bot)),
         asyncio.create_task(warn_expiry_loop(bot)),
     ]

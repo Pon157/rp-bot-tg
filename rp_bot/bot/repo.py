@@ -479,11 +479,9 @@ async def get_users_map(ids) -> dict:
 
 async def ensure_user(user_id: int) -> None:
     """Гарантирует строку в users (для наказания человека, который ещё не писал в чат)."""
+    # Не ставим joined_at/last_activity_at: человек ещё не писал в чат, и выбирать его в «кто ...» нельзя
     async with _conn() as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO users (user_id, joined_at, last_activity_at) VALUES (?, ?, ?)",
-            (user_id, _now(), _now()),
-        )
+        await db.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
         await db.execute("INSERT OR IGNORE INTO coins (user_id, red_coins) VALUES (?, 0)", (user_id,))
         await db.commit()
 
@@ -613,12 +611,13 @@ async def list_rp_commands(enabled_only: bool = True) -> list:
         return await cur.fetchall()
 
 
-async def upsert_rp_command(trigger: str, template: str, enabled: bool) -> None:
+async def upsert_rp_command(trigger: str, template: str, enabled: bool, variants: str = "") -> None:
     async with _conn() as db:
         await db.execute(
-            "INSERT INTO rp_commands (trigger, template, enabled) VALUES (?, ?, ?) "
-            "ON CONFLICT(trigger) DO UPDATE SET template=excluded.template, enabled=excluded.enabled",
-            (trigger, template, int(enabled)),
+            "INSERT INTO rp_commands (trigger, template, variants, enabled) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(trigger) DO UPDATE SET template=excluded.template, variants=excluded.variants, "
+            "enabled=excluded.enabled",
+            (trigger, template, variants, int(enabled)),
         )
         await db.commit()
 
@@ -645,7 +644,8 @@ async def recent_users(limit: int = 30) -> list:
     """Недавно писавшие в чат — Bot API не отдаёт список всех участников группы."""
     async with _conn() as db:
         cur = await db.execute(
-            "SELECT user_id, username, first_name FROM users WHERE banned=0 ORDER BY last_activity_at DESC LIMIT ?",
+            "SELECT user_id, username, first_name FROM users WHERE banned=0 AND messages_total > 0 "
+            "ORDER BY last_activity_at DESC LIMIT ?",
             (limit,),
         )
         return await cur.fetchall()
@@ -710,3 +710,33 @@ async def last_reasons(user_ids, action: str) -> dict[int, str]:
         for r in await cur.fetchall():
             out.setdefault(r["user_id"], r["reason"] or "")  # первая строка = самая свежая
         return out
+
+
+# ------------------------------------------------ настройки (таблица meta) ----
+
+async def get_meta(key: str, default: str | None = None) -> str | None:
+    async with _conn() as db:
+        cur = await db.execute("SELECT value FROM meta WHERE key=?", (key,))
+        row = await cur.fetchone()
+        return row["value"] if row else default
+
+
+async def set_meta(key: str, value: str) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, str(value)),
+        )
+        await db.commit()
+
+
+async def decay_blood(amount: int) -> int:
+    """Списывает amount капель со всех активных отношений (не браков). Возвращает число затронутых пар."""
+    async with _conn() as db:
+        cur = await db.execute(
+            "UPDATE relationships SET blood_drops = MAX(0, blood_drops - ?) "
+            "WHERE status='active' AND rel_type='relationship'",
+            (amount,),
+        )
+        await db.commit()
+        return cur.rowcount

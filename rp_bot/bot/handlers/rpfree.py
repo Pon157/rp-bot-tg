@@ -3,6 +3,7 @@
 Шаблон: {1} — автор, {2} — цель, {e:fire} — премиум-эмодзи из emojis.py."""
 from __future__ import annotations
 
+import random
 import re
 import time
 
@@ -63,4 +64,6 @@ async def rp_command(message: Message, rp_command: dict, rp_args: str) -> None:
     if target.id == message.from_user.id:
         await message.reply(f"{e('warn')} На себя такое не направить.")
         return
-    await message.answer(render_template(rp_command["template"], mention(message.from_user), mention(target)))
+    options = [v for v in (rp_command.get("variants") or "").splitlines() if v.strip()]
+    template = random.choice(options) if options else rp_command["template"]
+    await message.answer(render_template(template, mention(message.from_user), mention(target)))

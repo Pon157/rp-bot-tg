@@ -107,7 +107,13 @@ async def build_help_sections() -> list:
 
     rp = await repo.list_rp_commands()
     if rp:
-        rows = [(f"{c['trigger']} @ник", _target_hint(c["template"])) for c in rp]
+        rows = []
+        for c in rp:
+            options = [v for v in (c["variants"] or "").splitlines() if v.strip()]
+            if options:
+                rows.append((f"{c['trigger']} @ник", f"случайно: {len(options)} вариантов"))
+            else:
+                rows.append((f"{c['trigger']} @ник", _target_hint(c["template"])))
         sections.append(("fire", "RP-действия (без наград)", rows))
 
     sections += _sections_static_tail()

@@ -219,13 +219,43 @@ async def rp_page(request: Request):
 
 
 @app.post("/rp")
-async def rp_upsert(request: Request, trigger: str = Form(...), template: str = Form(...), enabled: str = Form("")):
+async def rp_upsert(request: Request, trigger: str = Form(...), template: str = Form(""),
+                    variants: str = Form(""), enabled: str = Form("")):
     if (r := require_login(request)):
         return r
     trigger = " ".join(trigger.strip().casefold().split())
-    if trigger and "{1}" in template and "{2}" in template:
-        await repo.upsert_rp_command(trigger, template.strip(), enabled == "on")
+    opts = [v.strip() for v in variants.splitlines() if v.strip()]
+    if not opts and template.strip():
+        opts = [template.strip()]
+    if not trigger or not opts:
+        raise HTTPException(status_code=400, detail="Нужен триггер и хотя бы один вариант (шаблон или список)")
+    for o in opts:
+        if "{1}" not in o or "{2}" not in o:
+            raise HTTPException(status_code=400, detail=f"В варианте должны быть {{1}} и {{2}}: «{o}»")
+    await repo.upsert_rp_command(trigger, template.strip(), enabled == "on", "\n".join(opts) if len(opts) > 1 else "")
     return RedirectResponse("/rp", status_code=303)
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, saved: str = ""):
+    if (r := require_login(request)):
+        return r
+    values = {
+        "amount": await repo.get_meta("blood_decay_amount", "0"),
+        "hours": await repo.get_meta("blood_decay_hours", "24"),
+    }
+    return templates.TemplateResponse("settings.html", {"request": request, "values": values, "saved": saved})
+
+
+@app.post("/settings")
+async def settings_save(request: Request, blood_decay_amount: int = Form(0), blood_decay_hours: float = Form(24)):
+    if (r := require_login(request)):
+        return r
+    if blood_decay_amount < 0 or blood_decay_hours <= 0:
+        raise HTTPException(status_code=400, detail="Капли не могут быть отрицательными, период больше нуля")
+    await repo.set_meta("blood_decay_amount", str(blood_decay_amount))
+    await repo.set_meta("blood_decay_hours", str(blood_decay_hours))
+    return RedirectResponse("/settings?saved=1", status_code=303)
 
 
 @app.post("/rp/{command_id}/delete")

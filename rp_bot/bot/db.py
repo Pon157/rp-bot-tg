@@ -128,7 +128,8 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE TABLE IF NOT EXISTS rp_commands (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     trigger TEXT NOT NULL UNIQUE,
-    template TEXT NOT NULL,
+    template TEXT NOT NULL DEFAULT '',
+    variants TEXT NOT NULL DEFAULT '',   -- несколько вариантов, по одному на строку: выбирается случайный
     enabled INTEGER NOT NULL DEFAULT 1
 );
 
@@ -190,6 +191,10 @@ async def init_db() -> None:
         await db.execute(
             "INSERT OR IGNORE INTO rules (id, text, broadcasted) VALUES (1, 'Правила ещё не заданы.', 1)"
         )
+        # миграция: старые базы получают колонку variants
+        cur = await db.execute("PRAGMA table_info(rp_commands)")
+        if "variants" not in [r[1] for r in await cur.fetchall()]:
+            await db.execute("ALTER TABLE rp_commands ADD COLUMN variants TEXT NOT NULL DEFAULT ''")
         # стартовый набор свободных RP-команд — один раз; удалённые потом не возвращаются
         cur = await db.execute("SELECT value FROM meta WHERE key='rp_seeded'")
         if await cur.fetchone() is None:

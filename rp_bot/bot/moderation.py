@@ -139,6 +139,11 @@ async def apply_action(bot: Bot, action: str, user_id: int, *, duration_sec: int
 
     except TelegramAPIError as exc:
         logger.warning("Действие %s для %s не удалось: %s", action, user_id, exc)
+        if "PARTICIPANT_ID_INVALID" in str(exc).upper():
+            return _fail(
+                f"Telegram не знает участника с ID <code>{user_id}</code>. Проверьте ID: он должен быть настоящим "
+                "Telegram ID человека (узнать можно через @userinfobot). Сам человек не обязан быть в чате."
+            )
         return _fail(
             f"Не получилось ({esc(action)}): {esc(getattr(exc, 'message', str(exc)))}.\n"
             "Проверьте, что бот — админ чата с правом блокировать участников."

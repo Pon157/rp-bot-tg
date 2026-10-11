@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Настройки{% endblock %}
+{% block content %}
+<h1>Настройки</h1>
+{% if saved %}<div class="panel"><p>Сохранено. Бот применит изменения в течение минуты.</p></div>{% endif %}
+
+<div class="panel">
+  <h2>Списание капель крови</h2>
+  <p class="muted">Капли крови отношений уходят со временем: каждые N часов со всех активных отношений
+  (не браков) списывается указанное число капель. Когда капли доходят до нуля, отношения расторгаются.
+  Значение 0 отключает списание.</p>
+  <form method="post" action="/settings">
+    <label>Сколько капель списывать</label>
+    <input type="number" name="blood_decay_amount" min="0" value="{{ values['amount'] }}" required>
+    <label>Через сколько часов (период)</label>
+    <input type="number" name="blood_decay_hours" min="0.1" step="0.1" value="{{ values['hours'] }}" required>
+    <button type="submit">Сохранить</button>
+  </form>
+  <p class="muted">Пример: 10 капель каждые 24 часа — это 10 капель в сутки.</p>
+</div>
+{% endblock %}
