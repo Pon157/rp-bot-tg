@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import random
+import re
 
 from aiogram import Router, F
+from aiogram.filters import Command
 from aiogram.types import Message
 
+from bot import repo
 from bot.config import settings
 from bot.emojis import e
+from bot.rich import answer_rich, rtable
+from bot.utils.formatting import esc, fmt_timedelta, quote, user_link
 
 router = Router(name="fun")
 
@@ -16,59 +21,113 @@ async def who_admin(message: Message) -> None:
     await message.reply("а тебя это ебать не должно")
 
 
-@router.message(F.text.regexp(r"^кто\s+(?P<q>.+)$", flags=0))
+@router.message(F.text.regexp(r"(?i)^кто\s+(?P<q>.+)$"))
 async def who_random(message: Message) -> None:
-    q = message.text.split(" ", 1)[1].strip()
+    q = message.text.split(None, 1)[1].strip()
     if q.casefold() in ("я", "админ"):
         return  # обрабатывается другими хэндлерами
-    member_ids = await _chat_member_sample(message)
-    if not member_ids:
+    rows = await repo.recent_users(30)
+    if not rows:
         await message.reply("В чате пока некого выбрать 🤷")
         return
-    chosen = random.choice(member_ids)
-    display = f"@{chosen.username}" if chosen.username else chosen.first_name
-    await message.reply(f"{q.capitalize()} — {display}")
+    chosen = random.choice(rows)
+    await message.reply(f"{esc(q.capitalize())} — {user_link(chosen['user_id'], chosen['first_name'], chosen['username'])}")
 
 
 @router.message(F.text.regexp(r"^шанс\s+(?P<q>.+)$", flags=0))
 async def chance(message: Message) -> None:
     q = message.text.split(" ", 1)[1].strip()
     percent = random.randint(0, 100)
-    await message.reply(f"{e('search')} {q} — {percent}%", parse_mode="HTML")
+    await message.reply(f"{e('search')} {esc(q)} — <b>{percent}%</b>")
 
 
-@router.message(F.text == "/help")
+def _sections_static_head():
+    return [
+        ("person", "Профиль", [
+            ("кто я", "карточка профиля"),
+            ("+описание текст", "описание в профиль"),
+        ]),
+        ("heart", "Отношения", [
+            ("мутки", "предложить отношения (капли крови)"),
+            ("брак", "предложить брак по расчёту (без капель)"),
+            ("расторжение", "расторгнуть связь"),
+            ("мои отношения", "ваши связи"),
+            ("отношения", "список всех отношений"),
+            ("браки", "список всех браков"),
+        ]),
+    ]
+
+
+def _sections_static_tail():
+    return [
+        ("coin", "Монеты и игры", [
+            ("фарма / ферма", "монеты раз в 4 часа"),
+            ("баланс", "ваши монеты"),
+            ("кости, дуэль, монеточка, пианино", "игры; добавьте «ставка 50» — на монеты, иначе на наказание"),
+        ]),
+        ("megaphone", "Репорты", [
+            ("репорт причина", "ответом на сообщение нарушителя; карточка уходит модераторам в личку"),
+        ]),
+        ("book", "Прочее", [
+            ("правила", "правила чата"),
+            ("варны", "ваши нарушения"),
+            ("кто <вопрос>", "случайный участник"),
+            ("шанс <событие>", "случайный процент"),
+            ("/links", "ссылки"),
+            ("стараяверсия · новаяверсия", "ответы мне без таблиц (для старого Telegram) · с таблицами"),
+        ]),
+        ("chain", "Модераторам", [
+            ("варн · снять варн", "предупреждение"),
+            ("мут 2ч причина · размут", "срок: 30м, 2ч, 1д, навсегда"),
+            ("бан · разбан · кик", "блокировка"),
+            ("муты · баны", "списки"),
+        ]),
+    ]
+
+
+def _target_hint(template: str) -> str:
+    """Подсказка, что делает RP-команда: «{1} ударил {2}» -> «ударил»."""
+    text = re.sub(r"\{e:\w+\}", "", template)
+    text = text.replace("{1}", "").replace("{2}", "").strip(" .,")
+    return text or "действие"
+
+
+async def build_help_sections() -> list:
+    """Разделы справки. Команды капель крови и RP-действия читаются из базы,
+    поэтому всё, что добавлено в админ-панели, появляется здесь автоматически."""
+    sections = _sections_static_head()
+
+    blood = await repo.list_blood_commands()
+    if blood:
+        rows = []
+        for c in blood:
+            cd = "без кулдауна" if not c["cooldown_sec"] else f"кулдаун {fmt_timedelta(c['cooldown_sec'])}"
+            rows.append((f"{c['trigger']} @ник", f"+{c['amount']} капель крови, {cd}"))
+        sections.append(("heart", "Команды отношений (капли крови)", rows))
+
+    rp = await repo.list_rp_commands()
+    if rp:
+        rows = [(f"{c['trigger']} @ник", _target_hint(c["template"])) for c in rp]
+        sections.append(("fire", "RP-действия (без наград)", rows))
+
+    sections += _sections_static_tail()
+    return sections
+
+
+@router.message(Command("help"))
 async def help_cmd(message: Message) -> None:
-    text = (
-        f"{e('info')} <b>Список команд</b>\n\n"
-        "<b>Профиль</b>\n"
-        "• кто я — карточка профиля\n"
-        "• +описание [текст] — задать описание профиля\n\n"
-        "<b>Отношения</b>\n"
-        "• мутки @юзер — предложить отношения\n"
-        "• брак @юзер — предложить брак по расчету\n"
-        "• принять / отклонить — ответ на предложение\n"
-        "• расторжение @юзер — разорвать отношения/брак\n"
-        "• мои отношения — список ваших отношений и браков\n\n"
-        "<b>Экономика</b>\n"
-        "• фарма / ферма — получить монеты (раз в 4 часа)\n"
-        "• баланс — ваш баланс монет\n\n"
-        "<b>Игры</b>\n"
-        "• кости [ставка] — игра в кости\n"
-        "• дуэль ставка [число] — дуэль на монеты\n"
-        "• дуэль — дуэль на наказание\n"
-        "• монеточка [ставка|наказание] — игра монеточка\n"
-        "• пианино [ставка|наказание] — игра пианино\n\n"
-        "<b>Разное</b>\n"
-        "• правила — показать правила чата\n"
-        "• кто &lt;вопрос&gt; — бот выбирает случайного участника\n"
-        "• шанс &lt;действие&gt; — случайный процент\n"
-        "• /links — полезные ссылки"
-    )
-    await message.answer(text, parse_mode="HTML")
+    intro = (f"{e('info')} <b>Команды бота</b>\n"
+             "<i>Кого-то указываем ответом на его сообщение или через @ник (человек должен хоть раз писать в чат).</i>\n")
+    sections = await build_help_sections()
+    rich, classic = [intro], [intro]
+    for emoji, title, items in sections:
+        head = f"\n{e(emoji)} <b>{title}</b>\n"
+        rich.append(head + rtable(["Команда", "Что делает"], [[f"<code>{esc(c)}</code>", esc(d)] for c, d in items]))
+        classic.append(head + quote("\n".join(f"<code>{esc(c)}</code> — {esc(d)}" for c, d in items)))
+    await answer_rich(message, "".join(rich), fallback="".join(classic))
 
 
-@router.message(F.text == "/links")
+@router.message(Command("links"))
 async def links_cmd(message: Message) -> None:
     text = (
         f"{e('link')} <b>Ссылки</b>\n\n"
@@ -76,22 +135,3 @@ async def links_cmd(message: Message) -> None:
         f"{e('megaphone')} Наш тгк: {settings.bot_channel_url}"
     )
     await message.answer(text, parse_mode="HTML")
-
-
-async def _chat_member_sample(message: Message, limit: int = 30):
-    """aiogram/Bot API не даёт списка всех участников чата, поэтому берём тех,
-    кто уже писал в чат (зарегистрированы в БД через ActivityMiddleware)."""
-    from bot import repo
-    import aiosqlite
-
-    async with aiosqlite.connect(repo.DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT user_id, username, first_name FROM users ORDER BY last_activity_at DESC LIMIT ?", (limit,))
-        rows = await cur.fetchall()
-
-    class _U:
-        def __init__(self, r):
-            self.username = r["username"]
-            self.first_name = r["first_name"]
-
-    return [_U(r) for r in rows]

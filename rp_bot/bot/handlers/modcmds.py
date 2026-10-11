@@ -19,7 +19,13 @@ from bot.utils.targets import Person, target_and_rest
 
 router = Router(name="modcmds")
 
-HINT = f"{e('info')} Ответь командой на сообщение человека или укажи @ник / ID."
+HINT = (
+    f"{e('info')} Не понял, кого наказать. Варианты:\n"
+    "• ответом на сообщение: <code>бан спам</code>\n"
+    "• по нику: <code>бан @nick спам</code> (человек должен хоть раз писать в чат)\n"
+    "• по ID: <code>бан 123456789 спам</code> (ID — не короче 7 цифр)\n"
+    "Причина необязательна, но она попадёт в карточку и в «варны»."
+)
 
 
 async def _moderator(message: Message) -> tuple[bool, int | None]:
@@ -60,7 +66,7 @@ async def cmd_warn(message: Message) -> None:
         return
     actor, target, reason = prep
     _, text = await apply_action(message.bot, "warn", target.id, reason=reason, by_admin=actor)
-    await message.reply(text)
+    await reply_rich(message, text)
 
 
 @router.message(F.text.regexp(r"(?i)^(снять\s+варн|унварн)\b"))
@@ -71,7 +77,7 @@ async def cmd_unwarn(message: Message) -> None:
         return
     actor, target, reason = prep
     _, text = await apply_action(message.bot, "unwarn", target.id, reason=reason, by_admin=actor)
-    await message.reply(text)
+    await reply_rich(message, text)
 
 
 @router.message(F.text.regexp(r"(?i)^мут\b"))
@@ -85,7 +91,7 @@ async def cmd_mute(message: Message) -> None:
         seconds, reason = 3600, rest          # без срока — час
     duration = None if seconds == FOREVER else seconds
     _, text = await apply_action(message.bot, "mute", target.id, duration_sec=duration, reason=reason, by_admin=actor)
-    await message.reply(text)
+    await reply_rich(message, text)
 
 
 @router.message(F.text.regexp(r"(?i)^(размут|анмут)\b"))
@@ -96,7 +102,7 @@ async def cmd_unmute(message: Message) -> None:
         return
     actor, target, reason = prep
     _, text = await apply_action(message.bot, "unmute", target.id, reason=reason, by_admin=actor)
-    await message.reply(text)
+    await reply_rich(message, text)
 
 
 @router.message(F.text.regexp(r"(?i)^бан\b"))
@@ -106,7 +112,7 @@ async def cmd_ban(message: Message) -> None:
         return
     actor, target, reason = prep
     _, text = await apply_action(message.bot, "ban", target.id, reason=reason, by_admin=actor)
-    await message.reply(text)
+    await reply_rich(message, text)
 
 
 @router.message(F.text.regexp(r"(?i)^(разбан|анбан)\b"))
@@ -117,7 +123,7 @@ async def cmd_unban(message: Message) -> None:
         return
     actor, target, reason = prep
     _, text = await apply_action(message.bot, "unban", target.id, reason=reason, by_admin=actor)
-    await message.reply(text)
+    await reply_rich(message, text)
 
 
 @router.message(F.text.regexp(r"(?i)^кик\b"))
@@ -127,7 +133,7 @@ async def cmd_kick(message: Message) -> None:
         return
     actor, target, reason = prep
     _, text = await apply_action(message.bot, "kick", target.id, reason=reason, by_admin=actor)
-    await message.reply(text)
+    await reply_rich(message, text)
 
 
 # ------------------------------------------------------------ просмотр ----
@@ -164,6 +170,11 @@ async def cmd_warns(message: Message) -> None:
     await message.reply(head)
 
 
+def _with_reason(when: str, reason: str | None) -> str:
+    """«навсегда · причина: спам» или просто «навсегда», если причины нет."""
+    return f"{when} · причина: {reason}" if reason else when
+
+
 async def _list_users(message: Message, rows, title: str, emoji: str, extra) -> None:
     is_mod, _ = await _moderator(message)
     if not is_mod:
@@ -188,11 +199,18 @@ async def _list_users(message: Message, rows, title: str, emoji: str, extra) -> 
 @router.message(F.text.casefold() == "муты")
 async def cmd_mutes(message: Message) -> None:
     rows = await repo.list_muted()
+    reasons = await repo.last_reasons([r["user_id"] for r in rows], "mute")
+
+    def until(r) -> str:
+        return "навсегда" if r["muted_until"].startswith("9999") else fmt_dt(r["muted_until"])[:16]
+
     await _list_users(message, rows, "В муте", "chain",
-                      lambda r: "навсегда" if r["muted_until"].startswith("9999") else fmt_dt(r["muted_until"])[:16])
+                      lambda r: _with_reason(until(r), reasons.get(r["user_id"])))
 
 
 @router.message(F.text.casefold() == "баны")
 async def cmd_bans(message: Message) -> None:
     rows = await repo.list_banned()
-    await _list_users(message, rows, "Забанены", "skull", lambda r: "навсегда")
+    reasons = await repo.last_reasons([r["user_id"] for r in rows], "ban")
+    await _list_users(message, rows, "Забанены", "skull",
+                      lambda r: _with_reason("навсегда", reasons.get(r["user_id"])))

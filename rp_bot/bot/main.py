@@ -14,6 +14,7 @@ from bot.middlewares import ChatGuardMiddleware, ActivityMiddleware, MyChatMembe
 from bot.handlers.rules import rules_broadcast_loop
 from bot.handlers.relationships import auto_dissolve_loop
 from bot.moderation import mod_queue_loop, warn_expiry_loop
+from bot.panel import start_panel, stop_panel
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rp_bot")
@@ -25,11 +26,19 @@ async def main() -> None:
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
-    dp.message.middleware(ChatGuardMiddleware())
-    dp.message.middleware(ActivityMiddleware())
-    dp.my_chat_member.middleware(MyChatMemberGuard())
+    dp.message.outer_middleware(ChatGuardMiddleware())
+    dp.message.outer_middleware(ActivityMiddleware())
+    dp.my_chat_member.outer_middleware(MyChatMemberGuard())
 
     dp.include_router(root_router)
+
+    me = await bot.get_me()
+    logger.info("Бот @%s (id=%s). Разрешённый чат: %s", me.username, me.id, settings.allowed_chat_id)
+    if not me.can_read_all_group_messages:
+        logger.warning(
+            "ПРИВАТНОСТЬ ВКЛЮЧЕНА: бот в группах видит только /команды. "
+            "Отключите в @BotFather: /setprivacy -> Disable, затем удалите бота из чата и добавьте заново."
+        )
 
     background_tasks = [
         asyncio.create_task(rules_broadcast_loop(bot)),
@@ -38,12 +47,15 @@ async def main() -> None:
         asyncio.create_task(warn_expiry_loop(bot)),
     ]
 
+    panel = await start_panel()      # админ-панель стартует вместе с ботом
+
     try:
         logger.info("Бот запущен, поллинг...")
         await dp.start_polling(bot)
     finally:
         for t in background_tasks:
             t.cancel()
+        await stop_panel(panel)
         await bot.session.close()
 
 

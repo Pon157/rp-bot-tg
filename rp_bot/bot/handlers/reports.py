@@ -16,6 +16,7 @@ from aiogram.types import CallbackQuery, Message
 from bot import repo
 from bot.config import reports_chat, settings
 from bot.emojis import e
+from bot.rich import reply_rich, send_rich
 from bot.moderation import apply_action, can_moderate
 from bot.utils.buttons import ibtn
 from bot.utils.formatting import esc, nick, nicks, quote, user_link
@@ -138,10 +139,10 @@ async def create_report(message: Message) -> None:
         logger.warning("Репорт #%s: ни одному модератору не удалось написать", report_id)
 
     if delivered:
-        await message.reply(f"{e('check')} Репорт <b>#{report_id}</b> отправлен модераторам{fallback_note}.")
+        await reply_rich(message, f"{e('check')} Репорт <b>#{report_id}</b> отправлен модераторам{fallback_note}.")
     else:
-        await message.reply(
-            f"{e('warn')} Репорт <b>#{report_id}</b> сохранён, но модераторам сейчас не удалось написать. "
+        await reply_rich(
+            message, f"{e('warn')} Репорт <b>#{report_id}</b> сохранён, но модераторам сейчас не удалось написать. "
             "Пусть модераторы нажмут /start у бота, чтобы получать репорты."
         )
 
@@ -198,5 +199,5 @@ async def handle_report_button(call: CallbackQuery) -> None:
     await _refresh_deliveries(bot, report["id"], render_report(
         report, names[report["reporter_id"]], names[report["target_id"]], status_line=done))
     if chat_text:
-        await bot.send_message(settings.allowed_chat_id, chat_text)
+        await send_rich(bot, settings.allowed_chat_id, chat_text)
     await call.answer("Готово")

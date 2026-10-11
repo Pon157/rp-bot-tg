@@ -29,6 +29,7 @@ from bot import repo
 from bot.config import settings
 
 BASE_DIR = Path(__file__).resolve().parent
+MOD_ACTIONS = {"warn", "unwarn", "mute", "unmute", "ban", "unban", "kick"}
 
 app = FastAPI(title="RP Bot — Админ-панель")
 app.add_middleware(SessionMiddleware, secret_key=settings.admin_panel_secret)
@@ -78,7 +79,8 @@ async def dashboard(request: Request):
     if (r := require_login(request)):
         return r
     log = await repo.recent_mod_log(30)
-    return templates.TemplateResponse("dashboard.html", {"request": request, "log": log})
+    open_reports = await repo.count_open_reports()
+    return templates.TemplateResponse("dashboard.html", {"request": request, "log": log, "open_reports": open_reports})
 
 
 @app.get("/user", response_class=HTMLResponse)
@@ -88,7 +90,8 @@ async def user_search(request: Request, q: str = ""):
     row = None
     if q:
         row = await repo.get_user_by_username(q) if not q.lstrip("-").isdigit() else await repo.get_user(int(q))
-    return templates.TemplateResponse("user.html", {"request": request, "q": q, "user": row})
+    history = await repo.user_mod_log(row["user_id"], 100) if row else []
+    return templates.TemplateResponse("user.html", {"request": request, "q": q, "user": row, "history": history})
 
 
 @app.post("/user/{user_id}/action")
@@ -96,7 +99,10 @@ async def user_action(request: Request, user_id: int, action: str = Form(...),
                        reason: str = Form(""), duration_hours: float = Form(1.0)):
     if (r := require_login(request)):
         return r
-    duration_sec = int(duration_hours * 3600) if action == "mute" else None
+    if action not in MOD_ACTIONS:
+        raise HTTPException(status_code=400, detail="Неизвестное действие")
+    # для мута: 0 часов = навсегда (None); для остальных действий срок не нужен
+    duration_sec = int(duration_hours * 3600) if action == "mute" and duration_hours > 0 else None
     await repo.enqueue_mod_action(user_id, action, duration_sec, reason, by_admin=None)
     return RedirectResponse(f"/user?q={user_id}", status_code=303)
 
@@ -166,3 +172,65 @@ async def admins_remove(request: Request, user_id: int):
         return r
     await repo.remove_admin(user_id)
     return RedirectResponse("/admins", status_code=303)
+
+
+# ------------------------------------------------------------- репорты ----
+
+@app.get("/reports", response_class=HTMLResponse)
+async def reports_page(request: Request, status: str = "open"):
+    if (r := require_login(request)):
+        return r
+    if status not in ("open", "resolved", "rejected", "all"):
+        status = "open"
+    reports = await repo.list_reports(status)
+    return templates.TemplateResponse("reports.html", {"request": request, "reports": reports, "status": status})
+
+
+@app.post("/reports/{report_id}/action")
+async def report_action(request: Request, report_id: int, action: str = Form(...)):
+    """warn / mute / ban — ставят наказание в очередь бота и закрывают репорт;
+    resolve — закрыть без наказания; reject — отклонить."""
+    if (r := require_login(request)):
+        return r
+    report = await repo.get_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Репорт не найден")
+    if action in ("warn", "mute", "ban"):
+        reason = f"репорт #{report_id}: {report['reason'] or '—'}"
+        await repo.enqueue_mod_action(report["target_id"], action, 3600 if action == "mute" else None, reason, None)
+        await repo.close_report(report_id, "resolved", action, None)
+    elif action == "resolve":
+        await repo.close_report(report_id, "resolved", "ok", None)
+    elif action == "reject":
+        await repo.close_report(report_id, "rejected", "no", None)
+    else:
+        raise HTTPException(status_code=400, detail="Неизвестное действие")
+    return RedirectResponse("/reports", status_code=303)
+
+
+# ------------------------------------------------ свободные RP-команды ----
+
+@app.get("/rp", response_class=HTMLResponse)
+async def rp_page(request: Request):
+    if (r := require_login(request)):
+        return r
+    cmds = await repo.list_rp_commands(enabled_only=False)
+    return templates.TemplateResponse("rp.html", {"request": request, "commands": cmds})
+
+
+@app.post("/rp")
+async def rp_upsert(request: Request, trigger: str = Form(...), template: str = Form(...), enabled: str = Form("")):
+    if (r := require_login(request)):
+        return r
+    trigger = " ".join(trigger.strip().casefold().split())
+    if trigger and "{1}" in template and "{2}" in template:
+        await repo.upsert_rp_command(trigger, template.strip(), enabled == "on")
+    return RedirectResponse("/rp", status_code=303)
+
+
+@app.post("/rp/{command_id}/delete")
+async def rp_delete(request: Request, command_id: int):
+    if (r := require_login(request)):
+        return r
+    await repo.delete_rp_command(command_id)
+    return RedirectResponse("/rp", status_code=303)
