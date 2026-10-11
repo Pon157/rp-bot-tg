@@ -210,7 +210,20 @@ async def cmd_mutes(message: Message) -> None:
 
 @router.message(F.text.casefold() == "баны")
 async def cmd_bans(message: Message) -> None:
+    is_mod, _ = await _moderator(message)
+    if not is_mod:
+        return
     rows = await repo.list_banned()
     reasons = await repo.last_reasons([r["user_id"] for r in rows], "ban")
     await _list_users(message, rows, "Забанены", "skull",
                       lambda r: _with_reason("навсегда", reasons.get(r["user_id"])))
+
+    pending = await repo.list_pending_bans()
+    if pending:
+        names = await nicks([p["user_id"] for p in pending])
+        lines = [
+            f"{i}. {names[p['user_id']]} — ждёт, пока Telegram его увидит"
+            + (f" · причина: {p['reason']}" if p["reason"] else "")
+            for i, p in enumerate(pending, 1)
+        ]
+        await reply_rich(message, f"{e('info')} <b>Бан в очереди</b> · {len(pending)}\n" + quote("\n".join(lines)))
