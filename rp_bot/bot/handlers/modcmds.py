@@ -10,6 +10,7 @@ from aiogram.types import Message
 
 from bot import repo
 from bot.emojis import e
+from bot.rich import reply_rich, rtable
 from bot.moderation import apply_action, can_moderate
 from bot.utils.formatting import (
     FOREVER, esc, fit_lines, fmt_dt, nicks, parse_duration, quote, table,
@@ -149,10 +150,17 @@ async def cmd_warns(message: Message) -> None:
         f"{e('warn')} <b>Нарушения</b> · {name}\n"
         + quote(f"Варнов: <b>{row['warns']}</b>\nМут: {mute_text}\nБан: {'да' if row['banned'] else 'нет'}")
     )
-    log = await repo.user_mod_log(target.id, 8)
+    log = await repo.user_mod_log(target.id, 15)
     if log:
-        rows = [(fmt_dt(r["created_at"])[:5] + " " + fmt_dt(r["created_at"])[11:], r["action"], r["reason"] or "—") for r in log]
-        head += "\n" + table(["Когда", "Что", "Причина"], rows, max_widths=[11, 7, 16])
+        short = [(fmt_dt(r["created_at"])[:5] + " " + fmt_dt(r["created_at"])[11:], r["action"], r["reason"] or "—")
+                 for r in log]
+        rich_head = head + "\n"
+        rich_rows = [[esc(a), esc(b), esc(c)] for a, b, c in short]
+        await reply_rich(
+            message, rich_head + rtable(["Когда", "Что", "Причина"], rich_rows),
+            fallback=head + "\n" + table(["Когда", "Что", "Причина"], short[:8], max_widths=[11, 7, 16]),
+        )
+        return
     await message.reply(head)
 
 
@@ -163,21 +171,28 @@ async def _list_users(message: Message, rows, title: str, emoji: str, extra) -> 
     if not rows:
         await message.reply(f"{e('check')} {title}: никого нет.")
         return
+    total = len(rows)
+    rows = rows[:150]
     names = await nicks([r["user_id"] for r in rows])
-    lines = [f"{i}. {names[r['user_id']]}{extra(r)}" for i, r in enumerate(rows, 1)]
+    table_rows = [[str(i), names[r["user_id"]], extra(r)] for i, r in enumerate(rows, 1)]
+    lines = [f"{i}. {names[r['user_id']]}" + (f" — {extra(r)}" if extra(r) else "") for i, r in enumerate(rows, 1)]
     shown, hidden = fit_lines(lines)
-    tail = f"\n…и ещё {hidden}" if hidden else ""
-    await message.reply(f"{e(emoji)} <b>{title}</b> · {len(rows)}\n" + quote("\n".join(shown) + tail, expandable=len(rows) > 8))
+    tail = f"\n…и ещё {hidden + total - len(rows)}" if (hidden or total > len(rows)) else ""
+    head = f"{e(emoji)} <b>{title}</b> · {total}\n"
+    await reply_rich(
+        message, head + rtable(["№", "Участник", "До"], table_rows, align=["right", "left", "right"]),
+        fallback=head + quote("\n".join(shown) + tail, expandable=total > 8),
+    )
 
 
 @router.message(F.text.casefold() == "муты")
 async def cmd_mutes(message: Message) -> None:
     rows = await repo.list_muted()
     await _list_users(message, rows, "В муте", "chain",
-                      lambda r: " — навсегда" if r["muted_until"].startswith("9999") else f" — до {fmt_dt(r['muted_until'])[:16]}")
+                      lambda r: "навсегда" if r["muted_until"].startswith("9999") else fmt_dt(r["muted_until"])[:16])
 
 
 @router.message(F.text.casefold() == "баны")
 async def cmd_bans(message: Message) -> None:
     rows = await repo.list_banned()
-    await _list_users(message, rows, "Забанены", "skull", lambda r: "")
+    await _list_users(message, rows, "Забанены", "skull", lambda r: "навсегда")

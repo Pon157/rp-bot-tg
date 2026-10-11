@@ -7,6 +7,7 @@ from aiogram.types import Message
 from bot import repo
 from bot.config import settings
 from bot.emojis import e
+from bot.rich import answer_rich, rtable
 from bot.utils.formatting import esc, fmt_date, mention, nicks, quote, table
 
 router = Router(name="profile")
@@ -45,11 +46,17 @@ async def who_am_i(message: Message) -> None:
         parts.append(f"{e('heart')} Вместе с: " + ", ".join(names[p] for p in partners))
 
     parts.append(f"{e('chat')} Сообщения:")
+    stats_rich = rtable(
+        ["Всего", "Месяц", "Неделя", "День"],
+        [[str(row["messages_total"]), str(row["messages_month"]), str(row["messages_week"]), str(row["messages_day"])]],
+        align=["right"] * 4,
+    )
     parts.append(stats)
     if row["bio"]:
         parts.append(f"{e('note')} О себе:\n" + quote(esc(row["bio"])))
     parts.append(f"{e('info')} Наш бот: @{settings.bot_username}\n{e('link')} Наш тгк: {settings.bot_channel_url}")
     caption = "\n".join(parts)
+    rich_text = caption.replace(stats, stats_rich)
 
     try:
         photos = await message.bot.get_user_profile_photos(user.id, limit=1)
@@ -58,7 +65,8 @@ async def who_am_i(message: Message) -> None:
             return
     except TelegramBadRequest:
         pass
-    await message.answer(caption)
+    # без аватарки подпись к фото не нужна — шлём нативной таблицей (с откатом на <pre>)
+    await answer_rich(message, rich_text, fallback=caption)
 
 
 @router.message(F.text.regexp(r"^\+описание\b"))

@@ -649,3 +649,23 @@ async def recent_users(limit: int = 30) -> list:
             (limit,),
         )
         return await cur.fetchall()
+
+
+# ------------------------------------------------- «старая/новая версия» ----
+
+async def get_rich_pref(user_id: int) -> bool:
+    """True — отвечать этому человеку Rich-сообщениями (по умолчанию)."""
+    async with _conn() as db:
+        cur = await db.execute("SELECT rich FROM user_prefs WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return bool(row["rich"]) if row else True
+
+
+async def set_rich_pref(user_id: int, value: bool) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "INSERT INTO user_prefs (user_id, rich) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET rich=excluded.rich",
+            (user_id, int(value)),
+        )
+        await db.commit()

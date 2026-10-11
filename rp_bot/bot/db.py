@@ -113,6 +113,12 @@ CREATE TABLE IF NOT EXISTS mod_queue (
     processed INTEGER NOT NULL DEFAULT 0
 );
 
+-- персональные настройки: rich=0 — «старая версия» (отвечать этому человеку без Rich Messages)
+CREATE TABLE IF NOT EXISTS user_prefs (
+    user_id INTEGER PRIMARY KEY,
+    rich INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT

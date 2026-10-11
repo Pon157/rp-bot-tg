@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from bot import repo
 from bot.config import settings
 from bot.emojis import e
+from bot.rich import answer_rich, rtable
 from bot.utils.formatting import bar, esc, fit_lines, fmt_date, mention, nick, nicks, quote
 from bot.utils.reserved import RESERVED
 from bot.utils.targets import Person, target_and_rest
@@ -157,29 +158,47 @@ async def _my_lines(user_id: int) -> list[str]:
 
 @router.message(F.text.casefold() == "мои отношения")
 async def my_relationships(message: Message) -> None:
-    lines = await _my_lines(message.from_user.id)
-    if not lines:
+    uid = message.from_user.id
+    rels = await repo.list_relationships(uid)
+    if not rels:
         await message.reply("У вас пока нет активных отношений или браков.")
         return
-    await message.answer(f"{e('heart')} <b>Ваши связи</b>\n" + quote("\n".join(lines)))
+    names = await nicks([x for r in rels for x in (r["user1_id"], r["user2_id"])])
+    rows, lines = [], []
+    for r in rels:
+        partner = r["user2_id"] if r["user1_id"] == uid else r["user1_id"]
+        label = REL_LABEL[r["rel_type"]].capitalize()
+        drops = f"{r['blood_drops']}/{settings.max_blood_drops}" if r["rel_type"] == "relationship" else "—"
+        rows.append([label, names[partner], drops])
+        extra = f" — {bar(r['blood_drops'], settings.max_blood_drops)} {drops}" if drops != "—" else ""
+        lines.append(f"{label}: {names[partner]}{extra}")
+    head = f"{e('heart')} <b>Ваши связи</b>\n"
+    await answer_rich(message, head + rtable(["Тип", "Партнёр", "Капли"], rows, align=["left", "left", "right"]),
+                      fallback=head + quote("\n".join(lines)))
 
 
 async def _pair_list(message: Message, rows, title: str, with_drops: bool) -> None:
     if not rows:
         await message.reply(f"{e('info')} {title}: пока никого.")
         return
+    total = len(rows)
+    rows = rows[:150]                      # в rich-таблице помещается много, но не бесконечно
     names = await nicks([x for r in rows for x in (r["user1_id"], r["user2_id"])])
-    lines = []
+    table_rows, lines = [], []
     for i, r in enumerate(rows, 1):
-        line = f"{i}. {names[r['user1_id']]} ♥ {names[r['user2_id']]}"
-        if with_drops:
-            line += f" — {r['blood_drops']}/{settings.max_blood_drops}"
-        else:
-            line += f" — с {fmt_date(r['started_at'])}"
-        lines.append(line)
+        pair = f"{names[r['user1_id']]} ♥ {names[r['user2_id']]}"
+        last = f"{r['blood_drops']}/{settings.max_blood_drops}" if with_drops else fmt_date(r["started_at"])
+        table_rows.append([str(i), pair, last])
+        lines.append(f"{i}. {pair} — {last if with_drops else 'с ' + last}")
+    more = f"\n…и ещё {total - len(rows)}" if total > len(rows) else ""
+    head = f"{e('heart')} <b>{title}</b> · {total}\n"
     shown, hidden = fit_lines(lines)
-    tail = f"\n…и ещё {hidden}" if hidden else ""
-    await message.answer(f"{e('heart')} <b>{title}</b> · {len(rows)}\n" + quote("\n".join(shown) + tail, expandable=len(rows) > 8))
+    tail = f"\n…и ещё {hidden + total - len(rows)}" if (hidden or total > len(rows)) else ""
+    await answer_rich(
+        message,
+        head + rtable(["№", "Пара", "Капли" if with_drops else "Вместе с"], table_rows, align=["right", "left", "right"]) + more,
+        fallback=head + quote("\n".join(shown) + tail, expandable=total > 8),
+    )
 
 
 @router.message(F.text.casefold() == "браки")

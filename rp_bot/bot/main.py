@@ -14,6 +14,7 @@ from bot.middlewares import ChatGuardMiddleware, ActivityMiddleware, MyChatMembe
 from bot.handlers.rules import rules_broadcast_loop
 from bot.handlers.relationships import auto_dissolve_loop
 from bot.moderation import mod_queue_loop, warn_expiry_loop
+from bot.panel import start_panel, stop_panel
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rp_bot")
@@ -46,12 +47,15 @@ async def main() -> None:
         asyncio.create_task(warn_expiry_loop(bot)),
     ]
 
+    panel = await start_panel()      # админ-панель стартует вместе с ботом
+
     try:
         logger.info("Бот запущен, поллинг...")
         await dp.start_polling(bot)
     finally:
         for t in background_tasks:
             t.cancel()
+        await stop_panel(panel)
         await bot.session.close()
 
 
