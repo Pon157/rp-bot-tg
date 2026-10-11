@@ -6,6 +6,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import ChatMemberUpdated, Message, TelegramObject
 
 from bot import repo
+from bot.moderation import apply_action
 from bot.config import reports_chat, settings
 
 STRANGER = "Я блять не в этой хуйне рожден. Верни меня в @{username}"
@@ -54,4 +55,17 @@ class ActivityMiddleware(BaseMiddleware):
                        event: TelegramObject, data: dict[str, Any]) -> Any:
         if isinstance(event, Message) and event.from_user and not event.from_user.is_bot:
             await repo.touch_user(event.from_user.id, event.from_user.username, event.from_user.first_name)
+            await apply_pending_ban(event.bot, event.from_user.id)
         return await handler(event, data)
+
+
+async def apply_pending_ban(bot, user_id: int) -> None:
+    """Если на этого человека стоит отложенный бан, применяем его теперь, когда Telegram его видит."""
+    if not user_id:
+        return
+    pending = await repo.pop_pending_ban(user_id)
+    if pending is None:
+        return
+    _, text = await apply_action(bot, "ban", user_id, reason=pending["reason"] or "",
+                                 by_admin=pending["by_admin"])
+    await bot.send_message(settings.allowed_chat_id, text)

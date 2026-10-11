@@ -139,10 +139,20 @@ async def apply_action(bot: Bot, action: str, user_id: int, *, duration_sec: int
 
     except TelegramAPIError as exc:
         logger.warning("Действие %s для %s не удалось: %s", action, user_id, exc)
-        if "PARTICIPANT_ID_INVALID" in str(exc).upper():
+        if action == "ban" and "INVALID" in str(exc).upper():
+            # Telegram не даёт забанить человека, которого не видит: бот его не знает (не писал и не заходил)
+            await repo.add_pending_ban(user_id, reason, by_admin)
+            await repo.add_mod_log(user_id, "ban-pending", reason, by_admin)
+            return True, (
+                f"{e('info')} <b>Бан поставлен в очередь</b> · {target}\n" + quote(
+                    "Telegram пока не видит этого человека, поэтому бот не может забанить его сейчас.\n"
+                    "Бан применится автоматически, как только он напишет в чат или зайдёт в него.\n"
+                    f"{reason_line}"
+                )
+            )
+        if "INVALID" in str(exc).upper():
             return _fail(
-                f"Telegram не знает участника с ID <code>{user_id}</code>. Проверьте ID: он должен быть настоящим "
-                "Telegram ID человека (узнать можно через @userinfobot). Сам человек не обязан быть в чате."
+                f"Telegram не нашёл участника с ID <code>{user_id}</code>. Проверьте, что ID верный."
             )
         return _fail(
             f"Не получилось ({esc(action)}): {esc(getattr(exc, 'message', str(exc)))}.\n"

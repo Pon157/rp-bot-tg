@@ -17,6 +17,7 @@ initData — в коде оставлен соответствующий ком�
 """
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -124,21 +125,33 @@ async def rules_update(request: Request, text: str = Form(...)):
 
 
 @app.get("/commands", response_class=HTMLResponse)
-async def commands_page(request: Request):
+async def commands_page(request: Request, edit: int = 0):
     if (r := require_login(request)):
         return r
     cmds = await repo.list_all_blood_commands()
-    return templates.TemplateResponse("commands.html", {"request": request, "commands": cmds})
+    edit_cmd = await repo.get_blood_command_by_id(edit) if edit else None
+    return templates.TemplateResponse("commands.html", {"request": request, "commands": cmds, "edit_cmd": edit_cmd})
 
 
 @app.post("/commands")
 async def commands_upsert(
     request: Request, trigger: str = Form(...), template: str = Form(""),
-    amount: int = Form(10), cooldown_sec: int = Form(0), enabled: str = Form("on"),
+    amount: int = Form(10), cooldown_sec: int = Form(0), enabled: str = Form(""), command_id: str = Form(""),
 ):
     if (r := require_login(request)):
         return r
-    await repo.upsert_blood_command(trigger.strip().casefold(), template, amount, cooldown_sec, enabled == "on")
+    trigger = trigger.strip().casefold()
+    if not trigger or " " in trigger:
+        raise HTTPException(status_code=400, detail="Триггер — одно слово без пробелов")
+    try:
+        if command_id.strip():
+            await repo.update_blood_command(int(command_id), trigger, template, amount, cooldown_sec, enabled == "on")
+        else:
+            if any(c["trigger"] == trigger for c in await repo.list_all_blood_commands()):
+                raise HTTPException(status_code=400, detail=f"Команда «{trigger}» уже есть — откройте её и нажмите «изменить»")
+            await repo.upsert_blood_command(trigger, template, amount, cooldown_sec, enabled == "on")
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Команда с таким триггером уже есть")
     return RedirectResponse("/commands", status_code=303)
 
 
@@ -211,16 +224,17 @@ async def report_action(request: Request, report_id: int, action: str = Form(...
 # ------------------------------------------------ свободные RP-команды ----
 
 @app.get("/rp", response_class=HTMLResponse)
-async def rp_page(request: Request):
+async def rp_page(request: Request, edit: int = 0):
     if (r := require_login(request)):
         return r
     cmds = await repo.list_rp_commands(enabled_only=False)
-    return templates.TemplateResponse("rp.html", {"request": request, "commands": cmds})
+    edit_cmd = await repo.get_rp_command(edit) if edit else None
+    return templates.TemplateResponse("rp.html", {"request": request, "commands": cmds, "edit_cmd": edit_cmd})
 
 
 @app.post("/rp")
 async def rp_upsert(request: Request, trigger: str = Form(...), template: str = Form(""),
-                    variants: str = Form(""), enabled: str = Form("")):
+                    variants: str = Form(""), enabled: str = Form(""), command_id: str = Form("")):
     if (r := require_login(request)):
         return r
     trigger = " ".join(trigger.strip().casefold().split())
@@ -232,30 +246,17 @@ async def rp_upsert(request: Request, trigger: str = Form(...), template: str = 
     for o in opts:
         if "{1}" not in o or "{2}" not in o:
             raise HTTPException(status_code=400, detail=f"В варианте должны быть {{1}} и {{2}}: «{o}»")
-    await repo.upsert_rp_command(trigger, template.strip(), enabled == "on", "\n".join(opts) if len(opts) > 1 else "")
+    variants_value = "\n".join(opts) if len(opts) > 1 else ""
+    try:
+        if command_id.strip():
+            await repo.update_rp_command(int(command_id), trigger, template.strip(), variants_value, enabled == "on")
+        else:
+            if any(c["trigger"] == trigger for c in await repo.list_rp_commands(enabled_only=False)):
+                raise HTTPException(status_code=400, detail=f"Команда «{trigger}» уже есть — откройте её и нажмите «изменить»")
+            await repo.upsert_rp_command(trigger, template.strip(), enabled == "on", variants_value)
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Команда с таким триггером уже есть")
     return RedirectResponse("/rp", status_code=303)
-
-
-@app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request, saved: str = ""):
-    if (r := require_login(request)):
-        return r
-    values = {
-        "amount": await repo.get_meta("blood_decay_amount", "0"),
-        "hours": await repo.get_meta("blood_decay_hours", "24"),
-    }
-    return templates.TemplateResponse("settings.html", {"request": request, "values": values, "saved": saved})
-
-
-@app.post("/settings")
-async def settings_save(request: Request, blood_decay_amount: int = Form(0), blood_decay_hours: float = Form(24)):
-    if (r := require_login(request)):
-        return r
-    if blood_decay_amount < 0 or blood_decay_hours <= 0:
-        raise HTTPException(status_code=400, detail="Капли не могут быть отрицательными, период больше нуля")
-    await repo.set_meta("blood_decay_amount", str(blood_decay_amount))
-    await repo.set_meta("blood_decay_hours", str(blood_decay_hours))
-    return RedirectResponse("/settings?saved=1", status_code=303)
 
 
 @app.post("/rp/{command_id}/delete")

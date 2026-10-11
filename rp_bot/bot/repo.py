@@ -740,3 +740,66 @@ async def decay_blood(amount: int) -> int:
         )
         await db.commit()
         return cur.rowcount
+
+
+# --------------------------------------------- отложенные баны (по ID) ----
+
+async def add_pending_ban(user_id: int, reason: str, by_admin: int | None) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "INSERT INTO pending_bans (user_id, reason, by_admin, created_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET reason=excluded.reason, by_admin=excluded.by_admin",
+            (user_id, reason, by_admin, _now()),
+        )
+        await db.commit()
+
+
+async def pop_pending_ban(user_id: int):
+    """Достаёт и удаляет отложенный бан. None, если его нет."""
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM pending_bans WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        await db.execute("DELETE FROM pending_bans WHERE user_id=?", (user_id,))
+        await db.commit()
+        return row
+
+
+async def list_pending_bans() -> list:
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM pending_bans ORDER BY created_at")
+        return await cur.fetchall()
+
+
+# --------------------------------------------- редактирование команд ----
+
+async def get_rp_command(command_id: int):
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM rp_commands WHERE id=?", (command_id,))
+        return await cur.fetchone()
+
+
+async def update_rp_command(command_id: int, trigger: str, template: str, variants: str, enabled: bool) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "UPDATE rp_commands SET trigger=?, template=?, variants=?, enabled=? WHERE id=?",
+            (trigger, template, variants, int(enabled), command_id),
+        )
+        await db.commit()
+
+
+async def get_blood_command_by_id(command_id: int):
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM blood_commands WHERE id=?", (command_id,))
+        return await cur.fetchone()
+
+
+async def update_blood_command(command_id: int, trigger: str, template: str, amount: int,
+                               cooldown_sec: int, enabled: bool) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "UPDATE blood_commands SET trigger=?, template=?, amount=?, cooldown_sec=?, enabled=? WHERE id=?",
+            (trigger, template, amount, cooldown_sec, int(enabled), command_id),
+        )
+        await db.commit()

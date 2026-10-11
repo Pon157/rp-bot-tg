@@ -159,6 +159,15 @@ CREATE TABLE IF NOT EXISTS report_deliveries (
     PRIMARY KEY (report_id, chat_id, message_id)
 );
 
+-- баны по ID, которых Telegram пока не видит (человек ещё не писал в чат и не заходил);
+-- применяются при первом появлении в чате
+CREATE TABLE IF NOT EXISTS pending_bans (
+    user_id INTEGER PRIMARY KEY,
+    reason TEXT,
+    by_admin INTEGER,
+    created_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS mod_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
