@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from aiogram import Router, F, Bot
 from aiogram.types import Message
@@ -10,6 +11,7 @@ from bot.config import settings
 from bot.emojis import e
 
 router = Router(name="rules")
+logger = logging.getLogger("rp_bot.rules")
 
 
 @router.message(F.text.casefold() == "правила")
@@ -32,5 +34,5 @@ async def rules_broadcast_loop(bot: Bot, poll_seconds: int = 15) -> None:
                 )
                 await repo.mark_rules_broadcasted()
         except Exception:
-            pass
+            logger.exception("Ошибка в rules_broadcast_loop")
         await asyncio.sleep(poll_seconds)

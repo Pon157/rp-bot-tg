@@ -33,6 +33,7 @@ class Settings:
     farm_cooldown_sec: int = 4 * 60 * 60
     farm_min_coins: int = 1
     farm_max_coins: int = 30
+    reports_chat_id: int = 0
 
 
 def load_settings() -> Settings:
@@ -47,7 +48,13 @@ def load_settings() -> Settings:
         admin_panel_allowed_ips=[ip.strip() for ip in ips_raw.split(",") if ip.strip()],
         admin_panel_port=int(_env("ADMIN_PANEL_PORT", "8080")),
         relationship_inactivity_days=int(_env("RELATIONSHIP_INACTIVITY_DAYS", "14")),
+        reports_chat_id=int(_env("REPORTS_CHAT_ID", "0") or 0),
     )
 
 
 settings = load_settings()
+
+
+def reports_chat() -> int:
+    """Куда слать репорты: отдельный чат модераторов или основной чат."""
+    return settings.reports_chat_id or settings.allowed_chat_id

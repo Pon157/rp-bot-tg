@@ -25,11 +25,19 @@ async def main() -> None:
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
-    dp.message.middleware(ChatGuardMiddleware())
-    dp.message.middleware(ActivityMiddleware())
-    dp.my_chat_member.middleware(MyChatMemberGuard())
+    dp.message.outer_middleware(ChatGuardMiddleware())
+    dp.message.outer_middleware(ActivityMiddleware())
+    dp.my_chat_member.outer_middleware(MyChatMemberGuard())
 
     dp.include_router(root_router)
+
+    me = await bot.get_me()
+    logger.info("Бот @%s (id=%s). Разрешённый чат: %s", me.username, me.id, settings.allowed_chat_id)
+    if not me.can_read_all_group_messages:
+        logger.warning(
+            "ПРИВАТНОСТЬ ВКЛЮЧЕНА: бот в группах видит только /команды. "
+            "Отключите в @BotFather: /setprivacy -> Disable, затем удалите бота из чата и добавьте заново."
+        )
 
     background_tasks = [
         asyncio.create_task(rules_broadcast_loop(bot)),

@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from aiogram import Router, F
-from aiogram.types import Message
+from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import Message
 
 from bot import repo
 from bot.config import settings
 from bot.emojis import e
-from bot.utils.formatting import fmt_date
+from bot.utils.formatting import esc, fmt_date, mention, nicks, quote, table
 
 router = Router(name="profile")
+
+AUTO_ROLES = {"senior": "старший админ", "admin": "админ"}
 
 
 @router.message(F.text.casefold() == "кто я")
@@ -20,44 +22,53 @@ async def who_am_i(message: Message) -> None:
         await repo.touch_user(user.id, user.username, user.first_name)
         row = await repo.get_user(user.id)
 
-    display = f"@{user.username}" if user.username else f'<a href="tg://user?id={user.id}">{user.first_name}</a>'
-    role = row["role"] or "участник"
-    bio = row["bio"] or "—"
+    who = f"@{user.username}" if user.username else mention(user)
+    level = await repo.is_admin(user.id)
+    role = row["role"] or AUTO_ROLES.get(level, "участник")
 
-    caption = (
-        f"{e('person')} {display}\n"
-        f"{e('trophy')} Роль: <b>{role}</b>\n"
-        f"{e('warn')} Нарушения: <b>{row['warns']}</b>\n"
-        f"{e('calendar')} В чате с: <b>{fmt_date(row['joined_at'])}</b>\n"
-        f"{e('chat')} Сообщений: всего <b>{row['messages_total']}</b> / "
-        f"за месяц <b>{row['messages_month']}</b> / за неделю <b>{row['messages_week']}</b> / "
-        f"за день <b>{row['messages_day']}</b>\n"
-        f"{e('note')} О себе: {bio}\n\n"
-        f"{e('info')} Наш бот: @{settings.bot_username}\n"
-        f"{e('link')} Наш тгк: {settings.bot_channel_url}"
+    stats = table(
+        ["Всего", "Месяц", "Неделя", "День"],
+        [[row["messages_total"], row["messages_month"], row["messages_week"], row["messages_day"]]],
+        align=["r", "r", "r", "r"],
     )
+
+    parts = [
+        f"{e('person')} {who} является <b>{esc(role)}</b>",
+        f"{e('warn')} Нарушения: <b>{row['warns']}</b>",
+        f"{e('calendar')} В чате с: <b>{fmt_date(row['joined_at'])}</b>",
+    ]
+
+    rels = await repo.list_relationships(user.id)
+    if rels:
+        partners = list(dict.fromkeys(r["user2_id"] if r["user1_id"] == user.id else r["user1_id"] for r in rels))[:3]
+        names = await nicks(partners)
+        parts.append(f"{e('heart')} Вместе с: " + ", ".join(names[p] for p in partners))
+
+    parts.append(f"{e('chat')} Сообщения:")
+    parts.append(stats)
+    if row["bio"]:
+        parts.append(f"{e('note')} О себе:\n" + quote(esc(row["bio"])))
+    parts.append(f"{e('info')} Наш бот: @{settings.bot_username}\n{e('link')} Наш тгк: {settings.bot_channel_url}")
+    caption = "\n".join(parts)
 
     try:
         photos = await message.bot.get_user_profile_photos(user.id, limit=1)
         if photos.total_count > 0:
-            file_id = photos.photos[0][-1].file_id
-            await message.answer_photo(file_id, caption=caption, parse_mode="HTML")
+            await message.answer_photo(photos.photos[0][-1].file_id, caption=caption)
             return
     except TelegramBadRequest:
         pass
+    await message.answer(caption)
 
-    await message.answer(caption, parse_mode="HTML")
 
-
-@router.message(F.text.regexp(r"^\+описание(\s+(?P<bio>.+))?$", flags=0))
+@router.message(F.text.regexp(r"^\+описание\b"))
 async def set_description(message: Message) -> None:
-    text = message.text or ""
-    bio = text.partition(" ")[2].strip()
+    bio = (message.text or "").partition(" ")[2].strip()
     if not bio:
-        await message.reply("Напиши описание после команды, например:\n<code>+описание люблю рп и чай</code>", parse_mode="HTML")
+        await message.reply(f"Напиши описание после команды, например:\n<code>+описание люблю рп и чай</code>")
         return
     if len(bio) > 300:
         await message.reply("Слишком длинно, максимум 300 символов.")
         return
     await repo.set_bio(message.from_user.id, bio)
-    await message.reply(f"{e('check')} Описание профиля обновлено.", parse_mode="HTML")
+    await message.reply(f"{e('check')} Описание профиля обновлено.")

@@ -206,11 +206,17 @@ async def add_blood_drops(rel_id: int, amount: int, max_cap: int) -> int:
 
 
 async def stale_relationships(rel_type: str, days: int) -> list[aiosqlite.Row]:
+    """Пары, у которых хотя бы один участник не писал в чат дольше `days` дней."""
     threshold = (dt.datetime.utcnow() - dt.timedelta(days=days)).isoformat()
     async with _conn() as db:
         cur = await db.execute(
-            "SELECT * FROM relationships WHERE status='active' AND rel_type=? AND last_activity_at < ?",
-            (rel_type, threshold),
+            """SELECT r.* FROM relationships r
+               LEFT JOIN users u1 ON u1.user_id = r.user1_id
+               LEFT JOIN users u2 ON u2.user_id = r.user2_id
+               WHERE r.status='active' AND r.rel_type=?
+                 AND (COALESCE(u1.last_activity_at, r.started_at) < ?
+                      OR COALESCE(u2.last_activity_at, r.started_at) < ?)""",
+            (rel_type, threshold, threshold),
         )
         return await cur.fetchall()
 
@@ -452,3 +458,194 @@ async def mark_mod_queue_done(item_id: int) -> None:
     async with _conn() as db:
         await db.execute("UPDATE mod_queue SET processed=1 WHERE id=?", (item_id,))
         await db.commit()
+
+
+# ======================================================================
+#  Добавлено: модерация, репорты, свободные RP-команды, списки
+# ======================================================================
+
+FOREVER_ISO = "9999-12-31T00:00:00"
+
+
+async def get_users_map(ids) -> dict:
+    ids = list(set(ids))
+    if not ids:
+        return {}
+    marks = ",".join("?" * len(ids))
+    async with _conn() as db:
+        cur = await db.execute(f"SELECT * FROM users WHERE user_id IN ({marks})", ids)
+        return {r["user_id"]: r for r in await cur.fetchall()}
+
+
+async def ensure_user(user_id: int) -> None:
+    """Гарантирует строку в users (для наказания человека, который ещё не писал в чат)."""
+    async with _conn() as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO users (user_id, joined_at, last_activity_at) VALUES (?, ?, ?)",
+            (user_id, _now(), _now()),
+        )
+        await db.execute("INSERT OR IGNORE INTO coins (user_id, red_coins) VALUES (?, 0)", (user_id,))
+        await db.commit()
+
+
+async def apply_unwarn(user_id: int) -> int:
+    async with _conn() as db:
+        await db.execute("UPDATE users SET warns = MAX(0, warns - 1) WHERE user_id=?", (user_id,))
+        # снятый вручную варн не должен потом «истечь» ещё раз и съесть чужой варн
+        await db.execute(
+            "UPDATE warn_expiries SET processed=1 WHERE id = "
+            "(SELECT id FROM warn_expiries WHERE user_id=? AND processed=0 ORDER BY expires_at LIMIT 1)",
+            (user_id,),
+        )
+        cur = await db.execute("SELECT warns FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        await db.commit()
+        return row["warns"] if row else 0
+
+
+async def clear_mute(user_id: int) -> None:
+    async with _conn() as db:
+        await db.execute("UPDATE users SET muted_until=NULL WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+async def clear_ban(user_id: int) -> None:
+    async with _conn() as db:
+        await db.execute("UPDATE users SET banned=0 WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+async def list_muted() -> list:
+    async with _conn() as db:
+        cur = await db.execute(
+            "SELECT * FROM users WHERE muted_until IS NOT NULL AND muted_until > ? ORDER BY muted_until", (_now(),)
+        )
+        return await cur.fetchall()
+
+
+async def list_banned() -> list:
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM users WHERE banned=1 ORDER BY user_id")
+        return await cur.fetchall()
+
+
+async def user_mod_log(user_id: int, limit: int = 10) -> list:
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM mod_log WHERE user_id=? ORDER BY id DESC LIMIT ?", (user_id, limit))
+        return await cur.fetchall()
+
+
+# ---------------------------------------------------------------- репорты ----
+
+async def create_report(reporter_id: int, target_id: int, chat_id: int, message_id: int | None,
+                        reason: str, snippet: str) -> int:
+    async with _conn() as db:
+        cur = await db.execute(
+            """INSERT INTO reports (reporter_id, target_id, chat_id, message_id, reason, snippet, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'open', ?)""",
+            (reporter_id, target_id, chat_id, message_id, reason, snippet, _now()),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def set_report_post(report_id: int, post_chat_id: int, post_message_id: int) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "UPDATE reports SET post_chat_id=?, post_message_id=? WHERE id=?", (post_chat_id, post_message_id, report_id)
+        )
+        await db.commit()
+
+
+async def get_report(report_id: int):
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM reports WHERE id=?", (report_id,))
+        return await cur.fetchone()
+
+
+async def close_report(report_id: int, status: str, action: str, handled_by: int | None) -> bool:
+    """Закрывает репорт, только если он ещё открыт (защита от двойной обработки)."""
+    async with _conn() as db:
+        cur = await db.execute(
+            "UPDATE reports SET status=?, action=?, handled_by=?, handled_at=? WHERE id=? AND status='open'",
+            (status, action, handled_by, _now(), report_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def last_report_time(reporter_id: int):
+    async with _conn() as db:
+        cur = await db.execute(
+            "SELECT created_at FROM reports WHERE reporter_id=? ORDER BY id DESC LIMIT 1", (reporter_id,)
+        )
+        row = await cur.fetchone()
+        return dt.datetime.fromisoformat(row["created_at"]) if row else None
+
+
+async def list_reports(status: str = "open", limit: int = 100) -> list:
+    async with _conn() as db:
+        cur = await db.execute(
+            """SELECT r.*, tu.username AS target_username, tu.first_name AS target_name,
+                      ru.username AS reporter_username, ru.first_name AS reporter_name
+               FROM reports r
+               LEFT JOIN users tu ON tu.user_id = r.target_id
+               LEFT JOIN users ru ON ru.user_id = r.reporter_id
+               WHERE (? = 'all' OR r.status = ?)
+               ORDER BY r.id DESC LIMIT ?""",
+            (status, status, limit),
+        )
+        return await cur.fetchall()
+
+
+async def count_open_reports() -> int:
+    async with _conn() as db:
+        cur = await db.execute("SELECT COUNT(*) AS c FROM reports WHERE status='open'")
+        return (await cur.fetchone())["c"]
+
+
+# ------------------------------------------------- свободные RP-команды ----
+
+async def list_rp_commands(enabled_only: bool = True) -> list:
+    async with _conn() as db:
+        sql = "SELECT * FROM rp_commands" + (" WHERE enabled=1" if enabled_only else "") + " ORDER BY LENGTH(trigger) DESC, id"
+        cur = await db.execute(sql)
+        return await cur.fetchall()
+
+
+async def upsert_rp_command(trigger: str, template: str, enabled: bool) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "INSERT INTO rp_commands (trigger, template, enabled) VALUES (?, ?, ?) "
+            "ON CONFLICT(trigger) DO UPDATE SET template=excluded.template, enabled=excluded.enabled",
+            (trigger, template, int(enabled)),
+        )
+        await db.commit()
+
+
+async def delete_rp_command(command_id: int) -> None:
+    async with _conn() as db:
+        await db.execute("DELETE FROM rp_commands WHERE id=?", (command_id,))
+        await db.commit()
+
+
+# --------------------------------------------------------- списки пар ----
+
+async def list_active_by_types(types: list[str], order_by_drops: bool = False) -> list:
+    marks = ",".join("?" * len(types))
+    order = "blood_drops DESC, id" if order_by_drops else "started_at, id"
+    async with _conn() as db:
+        cur = await db.execute(
+            f"SELECT * FROM relationships WHERE status='active' AND rel_type IN ({marks}) ORDER BY {order}", types
+        )
+        return await cur.fetchall()
+
+
+async def recent_users(limit: int = 30) -> list:
+    """Недавно писавшие в чат — Bot API не отдаёт список всех участников группы."""
+    async with _conn() as db:
+        cur = await db.execute(
+            "SELECT user_id, username, first_name FROM users WHERE banned=0 ORDER BY last_activity_at DESC LIMIT ?",
+            (limit,),
+        )
+        return await cur.fetchall()

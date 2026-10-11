@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Репорты{% endblock %}
+{% block content %}
+<h1>Репорты</h1>
+<p>
+  <a class="btn {{ '' if status == 'open' else 'secondary' }}" href="/reports?status=open">Открытые</a>
+  <a class="btn {{ '' if status == 'resolved' else 'secondary' }}" href="/reports?status=resolved">Решённые</a>
+  <a class="btn {{ '' if status == 'rejected' else 'secondary' }}" href="/reports?status=rejected">Отклонённые</a>
+  <a class="btn {{ '' if status == 'all' else 'secondary' }}" href="/reports?status=all">Все</a>
+</p>
+
+{% if reports %}
+{% for r in reports %}
+<div class="panel">
+  <h2>#{{ r['id'] }} · на {{ r['target_name'] or r['target_username'] or r['target_id'] }}
+    <span class="muted">({{ r['target_id'] }})</span></h2>
+  <table>
+    <tr><th>От</th><td>{{ r['reporter_name'] or r['reporter_username'] or r['reporter_id'] }}</td></tr>
+    <tr><th>Причина</th><td>{{ r['reason'] or '—' }}</td></tr>
+    <tr><th>Сообщение</th><td>{{ r['snippet'] or '—' }}</td></tr>
+    <tr><th>Создан</th><td>{{ r['created_at'][:16] }}</td></tr>
+    <tr><th>Статус</th><td>{{ r['status'] }}{% if r['action'] %} · {{ r['action'] }}{% endif %}</td></tr>
+  </table>
+  {% if r['status'] == 'open' %}
+  <form method="post" action="/reports/{{ r['id'] }}/action">
+    <button name="action" value="warn">Варн</button>
+    <button name="action" value="mute">Мут 1ч</button>
+    <button name="action" value="ban">Бан</button>
+    <button name="action" value="resolve" class="secondary">Решено</button>
+    <button name="action" value="reject" class="secondary">Отклонить</button>
+  </form>
+  {% endif %}
+</div>
+{% endfor %}
+{% else %}
+<div class="panel"><p class="muted">Репортов нет.</p></div>
+{% endif %}
+<p class="muted">Наказание из панели исполняется ботом за несколько секунд. Карточка репорта с кнопками в чате
+при закрытии из панели не обновляется, но повторно обработать такой репорт кнопками уже нельзя: бот скажет, что он закрыт.</p>
+{% endblock %}

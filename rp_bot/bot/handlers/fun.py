@@ -3,10 +3,13 @@ from __future__ import annotations
 import random
 
 from aiogram import Router, F
+from aiogram.filters import Command
 from aiogram.types import Message
 
+from bot import repo
 from bot.config import settings
 from bot.emojis import e
+from bot.utils.formatting import esc, quote, user_link
 
 router = Router(name="fun")
 
@@ -16,59 +19,69 @@ async def who_admin(message: Message) -> None:
     await message.reply("а тебя это ебать не должно")
 
 
-@router.message(F.text.regexp(r"^кто\s+(?P<q>.+)$", flags=0))
+@router.message(F.text.regexp(r"(?i)^кто\s+(?P<q>.+)$"))
 async def who_random(message: Message) -> None:
-    q = message.text.split(" ", 1)[1].strip()
+    q = message.text.split(None, 1)[1].strip()
     if q.casefold() in ("я", "админ"):
         return  # обрабатывается другими хэндлерами
-    member_ids = await _chat_member_sample(message)
-    if not member_ids:
+    rows = await repo.recent_users(30)
+    if not rows:
         await message.reply("В чате пока некого выбрать 🤷")
         return
-    chosen = random.choice(member_ids)
-    display = f"@{chosen.username}" if chosen.username else chosen.first_name
-    await message.reply(f"{q.capitalize()} — {display}")
+    chosen = random.choice(rows)
+    await message.reply(f"{esc(q.capitalize())} — {user_link(chosen['user_id'], chosen['first_name'], chosen['username'])}")
 
 
 @router.message(F.text.regexp(r"^шанс\s+(?P<q>.+)$", flags=0))
 async def chance(message: Message) -> None:
     q = message.text.split(" ", 1)[1].strip()
     percent = random.randint(0, 100)
-    await message.reply(f"{e('search')} {q} — {percent}%", parse_mode="HTML")
+    await message.reply(f"{e('search')} {esc(q)} — <b>{percent}%</b>")
 
 
-@router.message(F.text == "/help")
+@router.message(Command("help"))
 async def help_cmd(message: Message) -> None:
     text = (
-        f"{e('info')} <b>Список команд</b>\n\n"
-        "<b>Профиль</b>\n"
-        "• кто я — карточка профиля\n"
-        "• +описание [текст] — задать описание профиля\n\n"
-        "<b>Отношения</b>\n"
-        "• мутки @юзер — предложить отношения\n"
-        "• брак @юзер — предложить брак по расчету\n"
-        "• принять / отклонить — ответ на предложение\n"
-        "• расторжение @юзер — разорвать отношения/брак\n"
-        "• мои отношения — список ваших отношений и браков\n\n"
-        "<b>Экономика</b>\n"
-        "• фарма / ферма — получить монеты (раз в 4 часа)\n"
-        "• баланс — ваш баланс монет\n\n"
-        "<b>Игры</b>\n"
-        "• кости [ставка] — игра в кости\n"
-        "• дуэль ставка [число] — дуэль на монеты\n"
-        "• дуэль — дуэль на наказание\n"
-        "• монеточка [ставка|наказание] — игра монеточка\n"
-        "• пианино [ставка|наказание] — игра пианино\n\n"
-        "<b>Разное</b>\n"
-        "• правила — показать правила чата\n"
-        "• кто &lt;вопрос&gt; — бот выбирает случайного участника\n"
-        "• шанс &lt;действие&gt; — случайный процент\n"
-        "• /links — полезные ссылки"
+        f"{e('info')} <b>Команды бота</b>\n"
+        "<i>Кого-то указываем ответом на его сообщение или через @ник (человек должен хоть раз писать в чат).</i>\n\n"
+        f"{e('person')} <b>Профиль</b>\n"
+        + quote(
+            "<code>кто я</code> — карточка профиля\n"
+            "<code>+описание текст</code> — описание в профиль"
+        )
+        + f"\n{e('heart')} <b>Отношения</b>\n"
+        + quote(
+            "<code>мутки</code> — предложить отношения (капли крови)\n"
+            "<code>брак</code> — предложить брак по расчёту\n"
+            "<code>расторжение</code> — расторгнуть связь\n"
+            "<code>мои отношения</code> · <code>отношения</code> · <code>браки</code> — списки\n"
+            "Принять/отклонить — кнопками под предложением"
+        )
+        + f"\n{e('fire')} <b>RP-действия</b>\n"
+        + quote("<code>ударить</code>, <code>обнять</code>, <code>поцеловать</code> … — полный набор задаёт администрация")
+        + f"\n{e('coin')} <b>Монеты и игры</b>\n"
+        + quote(
+            "<code>фарма</code> / <code>ферма</code> — монеты раз в 4 часа, <code>баланс</code>\n"
+            "<code>кости</code> · <code>дуэль</code> · <code>монеточка</code> · <code>пианино</code>\n"
+            "добавь <code>ставка 50</code> — играть на монеты, иначе на наказание"
+        )
+        + f"\n{e('megaphone')} <b>Репорты</b>\n"
+        + quote("<code>репорт причина</code> — ответом на сообщение нарушителя")
+        + f"\n{e('book')} <b>Прочее</b>\n"
+        + quote(
+            "<code>правила</code> · <code>варны</code> · <code>кто &lt;вопрос&gt;</code> · "
+            "<code>шанс &lt;событие&gt;</code> · /links"
+        )
+        + f"\n{e('chain')} <b>Модераторам</b>\n"
+        + quote(
+            "<code>варн</code> · <code>снять варн</code> · <code>мут 2ч причина</code> · <code>размут</code>\n"
+            "<code>бан</code> · <code>разбан</code> · <code>кик</code> · <code>муты</code> · <code>баны</code>"
+        )
     )
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text)
 
 
-@router.message(F.text == "/links")
+@router.message(Command("links"))
 async def links_cmd(message: Message) -> None:
     text = (
         f"{e('link')} <b>Ссылки</b>\n\n"
@@ -76,22 +89,3 @@ async def links_cmd(message: Message) -> None:
         f"{e('megaphone')} Наш тгк: {settings.bot_channel_url}"
     )
     await message.answer(text, parse_mode="HTML")
-
-
-async def _chat_member_sample(message: Message, limit: int = 30):
-    """aiogram/Bot API не даёт списка всех участников чата, поэтому берём тех,
-    кто уже писал в чат (зарегистрированы в БД через ActivityMiddleware)."""
-    from bot import repo
-    import aiosqlite
-
-    async with aiosqlite.connect(repo.DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT user_id, username, first_name FROM users ORDER BY last_activity_at DESC LIMIT ?", (limit,))
-        rows = await cur.fetchall()
-
-    class _U:
-        def __init__(self, r):
-            self.username = r["username"]
-            self.first_name = r["first_name"]
-
-    return [_U(r) for r in rows]
