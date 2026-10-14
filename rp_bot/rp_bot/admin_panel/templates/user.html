@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Пользователь{% endblock %}
+{% block content %}
+<h1>Пользователь</h1>
+<div class="panel">
+  <form method="get" action="/user">
+    <label>Юзернейм (без @) или ID</label>
+    <input type="text" name="q" value="{{ q }}">
+    <button type="submit">Найти</button>
+  </form>
+</div>
+
+{% if q and not user %}
+<div class="panel"><p class="error">Не найден. Пользователь должен хотя бы раз написать в чат, чтобы попасть в базу.</p></div>
+{% endif %}
+
+{% if user %}
+<div class="panel">
+  <h2>@{{ user['username'] or '—' }} <span class="muted">({{ user['first_name'] }})</span></h2>
+  <table>
+    <tr><th>ID</th><td>{{ user['user_id'] }}</td></tr>
+    <tr><th>Роль</th><td>{{ user['role'] or 'участник' }}</td></tr>
+    <tr><th>Варны</th><td>{{ user['warns'] }}</td></tr>
+    <tr><th>Забанен</th><td>{{ 'да' if user['banned'] else 'нет' }}</td></tr>
+    <tr><th>Мут до</th><td>{{ user['muted_until'] or '—' }}</td></tr>
+    <tr><th>В чате с</th><td>{{ user['joined_at'][:10] if user['joined_at'] else '—' }}</td></tr>
+    <tr><th>Сообщений всего</th><td>{{ user['messages_total'] }}</td></tr>
+    <tr><th>О себе</th><td>{{ user['bio'] or '—' }}</td></tr>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>Выдать наказание</h2>
+  <form method="post" action="/user/{{ user['user_id'] }}/action">
+    <label>Действие</label>
+    <select name="action">
+      <option value="warn">Варн</option>
+      <option value="unwarn">Снять варн</option>
+      <option value="mute">Мут</option>
+      <option value="ban">Бан</option>
+      <option value="unmute">Снять мут</option>
+      <option value="unban">Разбанить</option>
+      <option value="kick">Кик (удалить из чата без бана)</option>
+    </select>
+    <label>Длительность мута, часы (0 = навсегда)</label>
+    <input type="number" step="0.5" name="duration_hours" value="1">
+    <label>Причина</label>
+    <input type="text" name="reason" placeholder="нарушение правил п.3">
+    <button type="submit">Применить</button>
+  </form>
+  <p class="muted">Действие выполнится ботом в течение нескольких секунд.</p>
+</div>
+<div class="panel">
+  <h2>История наказаний</h2>
+  {% if history %}
+  <table>
+    <tr><th>Когда</th><th>Действие</th><th>Причина</th><th>Кто выдал</th></tr>
+    {% for h in history %}
+    <tr>
+      <td>{{ h['created_at'][:16] }}</td>
+      <td>{{ h['action'] }}</td>
+      <td>{{ h['reason'] or '—' }}</td>
+      <td>{{ h['by_admin'] or 'бот/панель' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">Наказаний не было.</p>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

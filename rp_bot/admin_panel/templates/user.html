@@ -35,18 +35,38 @@
     <label>Действие</label>
     <select name="action">
       <option value="warn">Варн</option>
+      <option value="unwarn">Снять варн</option>
       <option value="mute">Мут</option>
       <option value="ban">Бан</option>
       <option value="unmute">Снять мут</option>
       <option value="unban">Разбанить</option>
+      <option value="kick">Кик (удалить из чата без бана)</option>
     </select>
-    <label>Длительность мута, часы (если применимо)</label>
+    <label>Длительность мута, часы (0 = навсегда)</label>
     <input type="number" step="0.5" name="duration_hours" value="1">
     <label>Причина</label>
     <input type="text" name="reason" placeholder="нарушение правил п.3">
     <button type="submit">Применить</button>
   </form>
   <p class="muted">Действие выполнится ботом в течение нескольких секунд.</p>
+</div>
+<div class="panel">
+  <h2>История наказаний</h2>
+  {% if history %}
+  <table>
+    <tr><th>Когда</th><th>Действие</th><th>Причина</th><th>Кто выдал</th></tr>
+    {% for h in history %}
+    <tr>
+      <td>{{ h['created_at'][:16] }}</td>
+      <td>{{ h['action'] }}</td>
+      <td>{{ h['reason'] or '—' }}</td>
+      <td>{{ h['by_admin'] or 'бот/панель' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">Наказаний не было.</p>
+  {% endif %}
 </div>
 {% endif %}
 {% endblock %}

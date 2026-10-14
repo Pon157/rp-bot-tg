@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Вход{% endblock %}
+{% block content %}
+<div class="login-wrap">
+  <h1>Вход в панель</h1>
+  <p class="muted">Введите секретный код доступа старшей администрации.</p>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <form method="post" action="/login">
+    <label>Код доступа</label>
+    <input type="password" name="secret" autofocus>
+    <button type="submit">Войти</button>
+  </form>
+</div>
+{% endblock %}

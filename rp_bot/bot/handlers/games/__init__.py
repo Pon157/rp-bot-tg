@@ -1,6 +1,6 @@
 from aiogram import Router
 
-from . import dice, duel, coinflip, piano
+from . import coinflip, dice, duel, piano
 
 games_router = Router(name="games")
 games_router.include_router(dice.router)
