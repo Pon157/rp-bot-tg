@@ -143,6 +143,10 @@ async def cmd_warns(message: Message) -> None:
     """Доступна всем: свои варны или (ответом/@ником) чужие."""
     args = (message.text or "")[len("варны"):].strip()
     target, _ = await target_and_rest(message, args)
+    if args and target is None:
+        await reply_rich(message, f"{e('warn')} Не знаю такого @ника: он должен хоть раз писать в этот чат. "
+                                  "Ответьте командой на его сообщение или укажите числовой ID.")
+        return
     target = target or Person.from_user(message.from_user)
 
     row = await repo.get_user(target.id)

@@ -35,6 +35,8 @@ class Settings:
     farm_max_coins: int = 30
     reports_chat_id: int = 0
     rich_messages: bool = True
+    userbot_api_id: int = 0
+    userbot_api_hash: str = ""
     admin_panel_enabled: bool = True
     admin_panel_host: str = "0.0.0.0"
 
@@ -52,6 +54,8 @@ def load_settings() -> Settings:
         admin_panel_port=int(_env("ADMIN_PANEL_PORT", "8080")),
         relationship_inactivity_days=int(_env("RELATIONSHIP_INACTIVITY_DAYS", "14")),
         reports_chat_id=int(_env("REPORTS_CHAT_ID", "0") or 0),
+        userbot_api_id=int(_env("USERBOT_API_ID", "0") or 0),
+        userbot_api_hash=_env("USERBOT_API_HASH", ""),
         rich_messages=_env("RICH_MESSAGES", "1").strip().lower() not in ("0", "false", "no", "off"),
         admin_panel_enabled=_env("ADMIN_PANEL_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off"),
         admin_panel_host=_env("ADMIN_PANEL_HOST", "0.0.0.0"),

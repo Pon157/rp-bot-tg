@@ -41,7 +41,14 @@ async def target_and_rest(message: Message, args: str) -> tuple[Person | None, s
 
     if first.startswith("@") and len(first) > 1:
         row = await repo.get_user_by_username(first[1:])
-        return (Person.from_row(row) if row else None), tail.strip()
+        if row:
+            return Person.from_row(row), tail.strip()
+        # в базе бота нет — спрашиваем у Telegram через аккаунт-помощник (если включён)
+        from bot import userbot
+        info = await userbot.resolve_username(first[1:])
+        if info:
+            return Person(info["id"], info["first_name"], info["username"], info["is_bot"]), tail.strip()
+        return None, tail.strip()
 
     if re.fullmatch(r"\d{7,}", first):
         uid = int(first)

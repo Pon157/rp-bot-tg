@@ -140,7 +140,17 @@ async def apply_action(bot: Bot, action: str, user_id: int, *, duration_sec: int
     except TelegramAPIError as exc:
         logger.warning("Действие %s для %s не удалось: %s", action, user_id, exc)
         if action == "ban" and "INVALID" in str(exc).upper():
-            # Telegram не даёт забанить человека, которого не видит: бот его не знает (не писал и не заходил)
+            # Bot API не видит человека. Пробуем аккаунт-помощник (если настроен).
+            from bot import userbot
+            if userbot.enabled():
+                ok_ub, err_ub = await userbot.ban(chat_id, user_id)
+                if ok_ub:
+                    await repo.ensure_user(user_id)
+                    await repo.apply_ban(user_id)
+                    await repo.add_mod_log(user_id, "ban", reason, by_admin)
+                    return True, card("skull", "Бан (через аккаунт-помощник)")
+                logger.warning("Аккаунт-помощник не смог забанить %s: %s", user_id, err_ub)
+            # иначе ставим в очередь до первого появления человека в чате
             await repo.add_pending_ban(user_id, reason, by_admin)
             await repo.add_mod_log(user_id, "ban-pending", reason, by_admin)
             return True, (

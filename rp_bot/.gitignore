@@ -4,3 +4,5 @@ __pycache__/
 data/*.db
 venv/
 .venv/
+data/*.session
+data/*.session-journal

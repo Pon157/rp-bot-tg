@@ -17,6 +17,11 @@ router = Router(name="ids")
 async def show_id(message: Message) -> None:
     args = re.sub(r"(?i)^\.\s*ид", "", message.text or "", count=1).strip()
     target, _ = await target_and_rest(message, args)
+    if args and target is None:
+        # Указан @ник, которого бот не знает. Раньше тут подставлялся сам отправитель — это было неверно.
+        await reply_rich(message, f"{e('warn')} Не знаю такого @ника: он должен хоть раз писать в этот чат. "
+                                  "Ответьте командой на его сообщение или укажите числовой ID.")
+        return
     person = target or Person.from_user(message.from_user)
 
     lines = [f"ID: <code>{person.id}</code>"]
