@@ -1,25 +1,23 @@
 {% extends "base.html" %}
-{% block title %}Команды отношений{% endblock %}
+{% block title %}RP-команды{% endblock %}
 {% block content %}
-<h1>Команды отношений (пополняют капли крови)</h1>
-<p class="muted">Работают только между людьми в отношениях и начисляют капли крови. Команды без наград, для кого угодно — в разделе «RP-команды».<br>Например: триггер «свидание», шаблон «{1} пригласил {2} на свидание», +40 капель, кд 2 часа (7200 сек).
+<h1>RP-команды и пополнение капель крови</h1>
+<p class="muted">Например: триггер «свидание», шаблон «{1} пригласил {2} на свидание», +40 капель, кд 2 часа (7200 сек).
 Плейсхолдеры {1} и {2} — автор команды и упомянутый/тот, кому ответили.</p>
 
 <div class="panel">
-  <h2>{{ 'Изменить команду' if edit_cmd else 'Добавить команду' }}</h2>
+  <h2>Добавить / изменить команду</h2>
   <form method="post" action="/commands">
-    <input type="hidden" name="command_id" value="{{ edit_cmd['id'] if edit_cmd else '' }}">
     <label>Триггер (слово команды, без пробелов)</label>
-    <input type="text" name="trigger" value="{{ edit_cmd['trigger'] if edit_cmd else '' }}" placeholder="свидание" required>
+    <input type="text" name="trigger" placeholder="свидание" required>
     <label>RP-шаблон</label>
-    <input type="text" name="template" value="{{ edit_cmd['template'] if edit_cmd else '' }}" placeholder="{1} пригласил {2} на свидание">
+    <input type="text" name="template" placeholder="{1} пригласил {2} на свидание">
     <label>Капель крови за использование</label>
-    <input type="number" name="amount" value="{{ edit_cmd['amount'] if edit_cmd else 10 }}">
+    <input type="number" name="amount" value="10">
     <label>Кулдаун, секунды (0 = без кулдауна)</label>
-    <input type="number" name="cooldown_sec" value="{{ edit_cmd['cooldown_sec'] if edit_cmd else 0 }}">
-    <label><input type="checkbox" name="enabled" {{ 'checked' if (not edit_cmd or edit_cmd['enabled']) else '' }} style="width:auto;display:inline-block"> включена</label>
+    <input type="number" name="cooldown_sec" value="0">
+    <label><input type="checkbox" name="enabled" checked style="width:auto;display:inline-block"> включена</label>
     <button type="submit">Сохранить</button>
-    {% if edit_cmd %}<a href="/commands">отмена</a>{% endif %}
   </form>
 </div>
 
@@ -36,7 +34,6 @@
       <td>{{ c['cooldown_sec'] }}</td>
       <td>{{ 'да' if c['enabled'] else 'нет' }}</td>
       <td>
-        <a href="/commands?edit={{ c['id'] }}">изменить</a>
         <form class="inline" method="post" action="/commands/{{ c['id'] }}/delete">
           <button type="submit" class="secondary">удалить</button>
         </form>

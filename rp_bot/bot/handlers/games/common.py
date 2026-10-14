@@ -2,43 +2,43 @@ from __future__ import annotations
 
 import datetime as dt
 import itertools
-import random
-import re
 from dataclasses import dataclass, field
 
-from bot.utils.buttons import ibtn
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import Message, User
 
 from bot import repo
 from bot.emojis import e
-from bot.moderation import apply_action
-from bot.utils.formatting import mention
-from bot.utils.targets import Person, target_and_rest
 
 _challenge_ids = itertools.count(1)
+
+PUNISHMENTS = {
+    "mute_1h": "мут на 1 час",
+    "warn_1w": "варн на неделю (истекает автоматически)",
+}
 
 
 @dataclass
 class Challenge:
     id: int
     game: str                       # 'dice' | 'coinflip' | 'piano' | 'duel'
-    challenger: object              # aiogram User или Person — главное id/first_name/username
-    opponent: object
+    challenger: User
+    opponent: User
     chat_id: int
     stake_coins: int = 0            # 0, если игра на наказание
     punishment: str | None = None   # 'mute_1h' | 'warn_1w', если игра на наказание
     created_at: dt.datetime = field(default_factory=dt.datetime.utcnow)
-    progress: dict = field(default_factory=dict)
+    # состояние для игр с "прогрессивным шансом" (монеточка/пианино/дуэль)
+    progress: dict = field(default_factory=lambda: {"a": 0, "b": 0})
 
 
 CHALLENGES: dict[int, Challenge] = {}
 
 
-def new_challenge(game: str, challenger, opponent, chat_id: int,
-                  stake_coins: int = 0, punishment: str | None = None) -> Challenge:
+def new_challenge(game: str, challenger: User, opponent: User, chat_id: int,
+                   stake_coins: int = 0, punishment: str | None = None) -> Challenge:
     cid = next(_challenge_ids)
     ch = Challenge(id=cid, game=game, challenger=challenger, opponent=opponent,
-                   chat_id=chat_id, stake_coins=stake_coins, punishment=punishment)
+                    chat_id=chat_id, stake_coins=stake_coins, punishment=punishment)
     CHALLENGES[cid] = ch
     return ch
 
@@ -51,111 +51,98 @@ def drop_challenge(cid: int) -> None:
     CHALLENGES.pop(cid, None)
 
 
-async def parse_game_command(message: Message, word: str):
-    """Разбирает «кости @ник ставка 50» / ответ на сообщение.
-    Возвращает (соперник | None, ставка, остаток, ошибка | None)."""
-    args = re.sub(rf"(?i)^{word}", "", message.text or "", count=1).strip()
-    opponent, rest = await target_and_rest(message, args)
-    if opponent is None:
-        return None, 0, rest, (f"{e('info')} Ответь командой на сообщение соперника "
-                               f"или укажи @ник: <code>{word} @ник</code>")
-    if opponent.id == message.from_user.id:
-        return None, 0, rest, "Нельзя играть с самим собой 🙂"
-    if opponent.is_bot:
-        return None, 0, rest, "С ботами не играем 🙂"
-    stake = 0
-    m = re.search(r"(?i)ставка\s+(\d+)", rest)
-    if m:
-        stake = int(m.group(1))
-        if stake <= 0:
-            return None, 0, rest, "Ставка должна быть больше нуля."
-        if await repo.get_balance(message.from_user.id) < stake:
-            return None, 0, rest, f"{e('coin')} У вас не хватает монет на такую ставку."
-    return opponent, stake, rest, None
-
-
-def stake_text(stake: int, punishment: str | None = "mute_1h") -> str:
-    if stake:
-        return f"на ставку {stake} монет"
-    return "на мут на 1 час" if punishment == "mute_1h" else "на варн на неделю"
-
-
-async def settle_stakes(winner, loser, ch: Challenge, message: Message) -> None:
-    """Выплачивает монеты победителю либо реально применяет наказание проигравшему."""
-    head = f"{e('trophy')} Победитель: {mention(winner)}!"
+async def settle_stakes(winner: User, loser: User, ch: Challenge, message: Message) -> None:
+    """Начисляет монеты победителю (ставка уже списана с обоих при старте) или
+    объявляет наказание — сам мут/варн администратор применяет вручную или через
+    модуль модерации бота (apply_mute/apply_warn), здесь только фиксируем результат."""
     if ch.stake_coins > 0:
         total = ch.stake_coins * 2
         await repo.add_coins(winner.id, total)
-        await message.answer(f"{head} Забирает <b>{total}</b> монет.")
-    elif ch.punishment == "mute_1h":
-        _, text = await apply_action(message.bot, "mute", loser.id, duration_sec=3600, reason="проигрыш в игре")
-        await message.answer(f"{head}\n{text}")
-    elif ch.punishment == "warn_1w":
-        _, text = await apply_action(message.bot, "warn", loser.id, reason="проигрыш в игре", warn_expires_days=7)
-        await message.answer(f"{head}\n{text}")
+        await message.answer(
+            f"{e('trophy')} Победитель: {_disp(winner)}! Забирает <b>{total}</b> монет.",
+            parse_mode="HTML",
+        )
+    elif ch.punishment:
+        until = None
+        if ch.punishment == "mute_1h":
+            until = dt.datetime.utcnow() + dt.timedelta(hours=1)
+            await repo.apply_mute(loser.id, until)
+            await repo.add_mod_log(loser.id, "mute", "проигрыш в игре", None)
+            punish_text = "получает мут на 1 час"
+        else:
+            warns = await repo.apply_warn(loser.id, expires_in_days=7)
+            await repo.add_mod_log(loser.id, "warn", "проигрыш в игре (снимается через неделю)", None)
+            punish_text = f"получает варн (всего варнов: {warns}, этот снимется через неделю)"
+        await message.answer(
+            f"{e('trophy')} Победитель: {_disp(winner)}!\n{e('chain')} {_disp(loser)} {punish_text}.",
+            parse_mode="HTML",
+        )
     else:
-        await message.answer(head)
+        await message.answer(f"{e('trophy')} Победитель: {_disp(winner)}!", parse_mode="HTML")
 
 
-async def deduct_stake_or_fail(user, amount: int, message: Message) -> bool:
-    if amount <= 0:
-        return True
-    ok = await repo.try_take_coins(user.id, amount)
-    if not ok:
-        await message.answer(f"{e('coin')} У {mention(user)} не хватает монет на такую ставку.")
-    return ok
+def _disp(u: User) -> str:
+    name = u.first_name or (f"@{u.username}" if u.username else str(u.id))
+    return f'<a href="tg://user?id={u.id}">{name}</a>'
 
 
-async def take_both_stakes(ch: Challenge, message: Message) -> bool:
-    """Списывает ставки с обоих; если у кого-то не хватило — возвращает уже списанное."""
-    if not ch.stake_coins:
-        return True
-    if not await deduct_stake_or_fail(ch.challenger, ch.stake_coins, message):
-        return False
-    if not await deduct_stake_or_fail(ch.opponent, ch.stake_coins, message):
-        await repo.add_coins(ch.challenger.id, ch.stake_coins)
-        return False
-    return True
+import random
+
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
-# ---------------- «прогрессивные» игры: монеточка и пианино ----------------
-
-def progressive_keyboard(cid: int, prefix: str, button_label: str, icon: str = "fire") -> InlineKeyboardMarkup:
+def progressive_keyboard(cid: int, prefix: str, button_label: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        ibtn(button_label, icon, callback_data=f"{prefix}:press:{cid}")
+        InlineKeyboardButton(text=button_label, callback_data=f"{prefix}:press:{cid}")
     ]])
 
 
-async def handle_progressive_press(prefix: str, call, button_label: str, icon: str = "fire") -> None:
-    """Ходят по очереди; каждое нажатие поднимает шанс, что соперник сдастся прямо сейчас."""
-    ch = get_challenge(int(call.data.split(":")[2]))
+async def handle_progressive_press(prefix: str, call, button_label: str) -> None:
+    """Общая логика для игр 'монеточка' и 'пианино': ходят по очереди, каждое
+    нажатие поднимает шанс, что соперник сдастся именно сейчас."""
+    cid = int(call.data.split(":")[2])
+    ch = get_challenge(cid)
     if ch is None:
         await call.answer("Игра уже завершена.", show_alert=True)
         return
-    if call.from_user.id != ch.progress.get("turn_id", ch.challenger.id):
+
+    turn_user_id = ch.progress.get("turn_id", ch.challenger.id)
+    if call.from_user.id != turn_user_id:
         await call.answer("Сейчас не твой ход.", show_alert=True)
         return
 
     presser = ch.challenger if call.from_user.id == ch.challenger.id else ch.opponent
-    other = ch.opponent if presser.id == ch.challenger.id else ch.challenger
+    opponent = ch.opponent if presser.id == ch.challenger.id else ch.challenger
 
     presses = ch.progress.get("presses", 0) + 1
     ch.progress["presses"] = presses
+    # шанс, что соперник сдастся в этот раз: растёт с каждым нажатием, максимум ~95%
     give_up_chance = min(95, 15 + presses * 12)
 
     if random.randint(1, 100) <= give_up_chance:
         await call.message.edit_text(
-            f"{e('trophy')} {mention(other)} не выдержал! Победитель: {mention(presser)} 🎉"
+            f"{e('trophy')} {opponent.first_name} не выдержал! Победитель: {presser.first_name} 🎉",
+            parse_mode="HTML",
         )
-        await settle_stakes(presser, other, ch, call.message)
-        drop_challenge(ch.id)
+        await settle_stakes(presser, opponent, ch, call.message)
+        drop_challenge(cid)
         await call.answer()
         return
 
-    ch.progress["turn_id"] = other.id
+    ch.progress["turn_id"] = opponent.id
     await call.message.edit_text(
-        f"{e('fire')} {mention(presser)} жмёт «{button_label}»... {mention(other)} держится! "
-        f"({presses} попытка, шанс сдаться уже {give_up_chance}%)\nХод: {mention(other)}",
-        reply_markup=progressive_keyboard(ch.id, prefix, button_label, icon),
+        f"{e('fire')} {presser.first_name} жмёт «{button_label}»... {opponent.first_name} держится! "
+        f"({presses} попытка, шанс сдаться уже {give_up_chance}%)\nХод: {opponent.first_name}",
+        parse_mode="HTML",
+        reply_markup=progressive_keyboard(cid, prefix, button_label),
     )
     await call.answer()
+
+
+async def deduct_stake_or_fail(user: User, amount: int, message: Message) -> bool:
+    if amount <= 0:
+        return True
+    ok = await repo.try_take_coins(user.id, amount)
+    if not ok:
+        await message.answer(f"{e('coin')} У {_disp(user)} не хватает монет на такую ставку.", parse_mode="HTML")
+    return ok

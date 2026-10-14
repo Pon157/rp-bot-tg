@@ -17,7 +17,6 @@ initData — в коде оставлен соответствующий ком�
 """
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -30,7 +29,6 @@ from bot import repo
 from bot.config import settings
 
 BASE_DIR = Path(__file__).resolve().parent
-MOD_ACTIONS = {"warn", "unwarn", "mute", "unmute", "ban", "unban", "kick"}
 
 app = FastAPI(title="RP Bot — Админ-панель")
 app.add_middleware(SessionMiddleware, secret_key=settings.admin_panel_secret)
@@ -80,8 +78,7 @@ async def dashboard(request: Request):
     if (r := require_login(request)):
         return r
     log = await repo.recent_mod_log(30)
-    open_reports = await repo.count_open_reports()
-    return templates.TemplateResponse("dashboard.html", {"request": request, "log": log, "open_reports": open_reports})
+    return templates.TemplateResponse("dashboard.html", {"request": request, "log": log})
 
 
 @app.get("/user", response_class=HTMLResponse)
@@ -91,8 +88,7 @@ async def user_search(request: Request, q: str = ""):
     row = None
     if q:
         row = await repo.get_user_by_username(q) if not q.lstrip("-").isdigit() else await repo.get_user(int(q))
-    history = await repo.user_mod_log(row["user_id"], 100) if row else []
-    return templates.TemplateResponse("user.html", {"request": request, "q": q, "user": row, "history": history})
+    return templates.TemplateResponse("user.html", {"request": request, "q": q, "user": row})
 
 
 @app.post("/user/{user_id}/action")
@@ -100,10 +96,7 @@ async def user_action(request: Request, user_id: int, action: str = Form(...),
                        reason: str = Form(""), duration_hours: float = Form(1.0)):
     if (r := require_login(request)):
         return r
-    if action not in MOD_ACTIONS:
-        raise HTTPException(status_code=400, detail="Неизвестное действие")
-    # для мута: 0 часов = навсегда (None); для остальных действий срок не нужен
-    duration_sec = int(duration_hours * 3600) if action == "mute" and duration_hours > 0 else None
+    duration_sec = int(duration_hours * 3600) if action == "mute" else None
     await repo.enqueue_mod_action(user_id, action, duration_sec, reason, by_admin=None)
     return RedirectResponse(f"/user?q={user_id}", status_code=303)
 
@@ -125,33 +118,21 @@ async def rules_update(request: Request, text: str = Form(...)):
 
 
 @app.get("/commands", response_class=HTMLResponse)
-async def commands_page(request: Request, edit: int = 0):
+async def commands_page(request: Request):
     if (r := require_login(request)):
         return r
     cmds = await repo.list_all_blood_commands()
-    edit_cmd = await repo.get_blood_command_by_id(edit) if edit else None
-    return templates.TemplateResponse("commands.html", {"request": request, "commands": cmds, "edit_cmd": edit_cmd})
+    return templates.TemplateResponse("commands.html", {"request": request, "commands": cmds})
 
 
 @app.post("/commands")
 async def commands_upsert(
     request: Request, trigger: str = Form(...), template: str = Form(""),
-    amount: int = Form(10), cooldown_sec: int = Form(0), enabled: str = Form(""), command_id: str = Form(""),
+    amount: int = Form(10), cooldown_sec: int = Form(0), enabled: str = Form("on"),
 ):
     if (r := require_login(request)):
         return r
-    trigger = trigger.strip().casefold()
-    if not trigger or " " in trigger:
-        raise HTTPException(status_code=400, detail="Триггер — одно слово без пробелов")
-    try:
-        if command_id.strip():
-            await repo.update_blood_command(int(command_id), trigger, template, amount, cooldown_sec, enabled == "on")
-        else:
-            if any(c["trigger"] == trigger for c in await repo.list_all_blood_commands()):
-                raise HTTPException(status_code=400, detail=f"Команда «{trigger}» уже есть — откройте её и нажмите «изменить»")
-            await repo.upsert_blood_command(trigger, template, amount, cooldown_sec, enabled == "on")
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=400, detail="Команда с таким триггером уже есть")
+    await repo.upsert_blood_command(trigger.strip().casefold(), template, amount, cooldown_sec, enabled == "on")
     return RedirectResponse("/commands", status_code=303)
 
 
@@ -185,105 +166,3 @@ async def admins_remove(request: Request, user_id: int):
         return r
     await repo.remove_admin(user_id)
     return RedirectResponse("/admins", status_code=303)
-
-
-# ------------------------------------------------------------- репорты ----
-
-@app.get("/reports", response_class=HTMLResponse)
-async def reports_page(request: Request, status: str = "open"):
-    if (r := require_login(request)):
-        return r
-    if status not in ("open", "resolved", "rejected", "all"):
-        status = "open"
-    reports = await repo.list_reports(status)
-    return templates.TemplateResponse("reports.html", {"request": request, "reports": reports, "status": status})
-
-
-@app.post("/reports/{report_id}/action")
-async def report_action(request: Request, report_id: int, action: str = Form(...)):
-    """warn / mute / ban — ставят наказание в очередь бота и закрывают репорт;
-    resolve — закрыть без наказания; reject — отклонить."""
-    if (r := require_login(request)):
-        return r
-    report = await repo.get_report(report_id)
-    if report is None:
-        raise HTTPException(status_code=404, detail="Репорт не найден")
-    if action in ("warn", "mute", "ban"):
-        reason = f"репорт #{report_id}: {report['reason'] or '—'}"
-        await repo.enqueue_mod_action(report["target_id"], action, 3600 if action == "mute" else None, reason, None)
-        await repo.close_report(report_id, "resolved", action, None)
-    elif action == "resolve":
-        await repo.close_report(report_id, "resolved", "ok", None)
-    elif action == "reject":
-        await repo.close_report(report_id, "rejected", "no", None)
-    else:
-        raise HTTPException(status_code=400, detail="Неизвестное действие")
-    return RedirectResponse("/reports", status_code=303)
-
-
-# ------------------------------------------------ свободные RP-команды ----
-
-@app.get("/rp", response_class=HTMLResponse)
-async def rp_page(request: Request, edit: int = 0):
-    if (r := require_login(request)):
-        return r
-    cmds = await repo.list_rp_commands(enabled_only=False)
-    edit_cmd = await repo.get_rp_command(edit) if edit else None
-    return templates.TemplateResponse("rp.html", {"request": request, "commands": cmds, "edit_cmd": edit_cmd})
-
-
-@app.post("/rp")
-async def rp_upsert(request: Request, trigger: str = Form(...), template: str = Form(""),
-                    variants: str = Form(""), enabled: str = Form(""), command_id: str = Form("")):
-    if (r := require_login(request)):
-        return r
-    trigger = " ".join(trigger.strip().casefold().split())
-    opts = [v.strip() for v in variants.splitlines() if v.strip()]
-    if not opts and template.strip():
-        opts = [template.strip()]
-    if not trigger or not opts:
-        raise HTTPException(status_code=400, detail="Нужен триггер и хотя бы один вариант (шаблон или список)")
-    for o in opts:
-        if "{1}" not in o or "{2}" not in o:
-            raise HTTPException(status_code=400, detail=f"В варианте должны быть {{1}} и {{2}}: «{o}»")
-    variants_value = "\n".join(opts) if len(opts) > 1 else ""
-    try:
-        if command_id.strip():
-            await repo.update_rp_command(int(command_id), trigger, template.strip(), variants_value, enabled == "on")
-        else:
-            if any(c["trigger"] == trigger for c in await repo.list_rp_commands(enabled_only=False)):
-                raise HTTPException(status_code=400, detail=f"Команда «{trigger}» уже есть — откройте её и нажмите «изменить»")
-            await repo.upsert_rp_command(trigger, template.strip(), enabled == "on", variants_value)
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=400, detail="Команда с таким триггером уже есть")
-    return RedirectResponse("/rp", status_code=303)
-
-
-@app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request, saved: str = ""):
-    if (r := require_login(request)):
-        return r
-    values = {
-        "amount": await repo.get_meta("blood_decay_amount", "0"),
-        "hours": await repo.get_meta("blood_decay_hours", "24"),
-    }
-    return templates.TemplateResponse("settings.html", {"request": request, "values": values, "saved": saved})
-
-
-@app.post("/settings")
-async def settings_save(request: Request, blood_decay_amount: int = Form(0), blood_decay_hours: float = Form(24)):
-    if (r := require_login(request)):
-        return r
-    if blood_decay_amount < 0 or blood_decay_hours <= 0:
-        raise HTTPException(status_code=400, detail="Капли не могут быть отрицательными, период больше нуля")
-    await repo.set_meta("blood_decay_amount", str(blood_decay_amount))
-    await repo.set_meta("blood_decay_hours", str(blood_decay_hours))
-    return RedirectResponse("/settings?saved=1", status_code=303)
-
-
-@app.post("/rp/{command_id}/delete")
-async def rp_delete(request: Request, command_id: int):
-    if (r := require_login(request)):
-        return r
-    await repo.delete_rp_command(command_id)
-    return RedirectResponse("/rp", status_code=303)

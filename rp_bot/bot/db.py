@@ -113,61 +113,6 @@ CREATE TABLE IF NOT EXISTS mod_queue (
     processed INTEGER NOT NULL DEFAULT 0
 );
 
--- персональные настройки: rich=0 — «старая версия» (отвечать этому человеку без Rich Messages)
-CREATE TABLE IF NOT EXISTS user_prefs (
-    user_id INTEGER PRIMARY KEY,
-    rich INTEGER NOT NULL DEFAULT 1
-);
-
-CREATE TABLE IF NOT EXISTS meta (
-    key TEXT PRIMARY KEY,
-    value TEXT
-);
-
--- свободные RP-команды: работают вне отношений, ничего не начисляют ("ударить" -> "{1} ударил {2}")
-CREATE TABLE IF NOT EXISTS rp_commands (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    trigger TEXT NOT NULL UNIQUE,
-    template TEXT NOT NULL DEFAULT '',
-    variants TEXT NOT NULL DEFAULT '',   -- несколько вариантов, по одному на строку: выбирается случайный
-    enabled INTEGER NOT NULL DEFAULT 1
-);
-
--- репорты (жалобы) участников на других участников
-CREATE TABLE IF NOT EXISTS reports (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    reporter_id INTEGER NOT NULL,
-    target_id INTEGER NOT NULL,
-    chat_id INTEGER,
-    message_id INTEGER,            -- сообщение, на которое пожаловались
-    reason TEXT,
-    snippet TEXT,                  -- начало текста сообщения-нарушения
-    status TEXT NOT NULL DEFAULT 'open',   -- 'open' | 'resolved' | 'rejected'
-    action TEXT,                   -- что сделали: warn/mute/ban/delete/none
-    handled_by INTEGER,
-    created_at TEXT,
-    handled_at TEXT,
-    post_chat_id INTEGER,          -- где опубликован репорт для модераторов
-    post_message_id INTEGER
-);
-
--- где лежит копия репорта у каждого модератора (личка) — нужно, чтобы обновить их все после решения
-CREATE TABLE IF NOT EXISTS report_deliveries (
-    report_id INTEGER NOT NULL,
-    chat_id INTEGER NOT NULL,
-    message_id INTEGER NOT NULL,
-    PRIMARY KEY (report_id, chat_id, message_id)
-);
-
--- баны по ID, которых Telegram пока не видит (человек ещё не писал в чат и не заходил);
--- применяются при первом появлении в чате
-CREATE TABLE IF NOT EXISTS pending_bans (
-    user_id INTEGER PRIMARY KEY,
-    reason TEXT,
-    by_admin INTEGER,
-    created_at TEXT
-);
-
 CREATE TABLE IF NOT EXISTS mod_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -179,40 +124,13 @@ CREATE TABLE IF NOT EXISTS mod_log (
 """
 
 
-DEFAULT_RP = [
-    ("ударить", "{1} ударил {2}"),
-    ("обнять", "{1} обнял {2}"),
-    ("поцеловать", "{1} поцеловал {2}"),
-    ("погладить", "{1} погладил {2} по голове"),
-    ("пнуть", "{1} пнул {2}"),
-    ("укусить", "{1} укусил {2}"),
-    ("шлёпнуть", "{1} шлёпнул {2}"),
-    ("пожать руку", "{1} пожал руку {2}"),
-    ("дать пять", "{1} дал пять {2}"),
-    ("подмигнуть", "{1} подмигнул {2}"),
-]
-
-
 async def init_db() -> None:
     Path(settings.db_path).parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(settings.db_path) as db:
-        # WAL: чтение и запись из разных соединений (бот + панель) не блокируют друг друга
-        await db.execute("PRAGMA journal_mode=WAL")
         await db.executescript(SCHEMA)
         await db.execute(
             "INSERT OR IGNORE INTO rules (id, text, broadcasted) VALUES (1, 'Правила ещё не заданы.', 1)"
         )
-        # миграция: старые базы получают колонку variants
-        cur = await db.execute("PRAGMA table_info(rp_commands)")
-        if "variants" not in [r[1] for r in await cur.fetchall()]:
-            await db.execute("ALTER TABLE rp_commands ADD COLUMN variants TEXT NOT NULL DEFAULT ''")
-        # стартовый набор свободных RP-команд — один раз; удалённые потом не возвращаются
-        cur = await db.execute("SELECT value FROM meta WHERE key='rp_seeded'")
-        if await cur.fetchone() is None:
-            await db.executemany(
-                "INSERT OR IGNORE INTO rp_commands (trigger, template, enabled) VALUES (?, ?, 1)", DEFAULT_RP
-            )
-            await db.execute("INSERT INTO meta (key, value) VALUES ('rp_seeded', '1')")
         await db.commit()
 
 
