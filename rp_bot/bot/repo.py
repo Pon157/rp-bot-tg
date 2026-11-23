@@ -790,6 +790,101 @@ async def update_rp_command(command_id: int, trigger: str, template: str, varian
         await db.commit()
 
 
+# ---------------------------------------------------------------- питомцы ----
+
+async def get_pet(user_id: int) -> aiosqlite.Row | None:
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM pets WHERE user_id=?", (user_id,))
+        return await cur.fetchone()
+
+
+async def create_pet(user_id: int, name: str, species: str) -> None:
+    now = _now()
+    async with _conn() as db:
+        await db.execute(
+            """INSERT INTO pets (user_id, name, species, hunger, happiness, energy, level, xp,
+                                  created_at, last_tick_at)
+               VALUES (?, ?, ?, 80, 80, 80, 1, 0, ?, ?)
+               ON CONFLICT(user_id) DO UPDATE SET
+                 name=excluded.name, species=excluded.species, hunger=80, happiness=80, energy=80,
+                 level=1, xp=0, created_at=excluded.created_at, last_tick_at=excluded.last_tick_at,
+                 last_fed_at=NULL, last_played_at=NULL, last_walked_at=NULL""",
+            (user_id, name, species, now, now),
+        )
+        await db.commit()
+
+
+async def rename_pet(user_id: int, name: str) -> None:
+    async with _conn() as db:
+        await db.execute("UPDATE pets SET name=? WHERE user_id=?", (name, user_id))
+        await db.commit()
+
+
+async def apply_pet_tick(user_id: int, hunger: int, happiness: int, energy: int) -> None:
+    """Применяет пересчитанные (после упадка со временем) характеристики и обновляет штамп тика."""
+    async with _conn() as db:
+        await db.execute(
+            "UPDATE pets SET hunger=?, happiness=?, energy=?, last_tick_at=? WHERE user_id=?",
+            (hunger, happiness, energy, _now(), user_id),
+        )
+        await db.commit()
+
+
+async def pet_action(user_id: int, delta_map: dict, xp_gain: int, stamp_field: str) -> aiosqlite.Row:
+    """Изменяет характеристики питомца (clamp 0..100), начисляет опыт/уровень, ставит штамп кд.
+    delta_map: {'hunger': +.., 'happiness': +.., 'energy': +..}"""
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM pets WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        hunger = max(0, min(100, row["hunger"] + delta_map.get("hunger", 0)))
+        happiness = max(0, min(100, row["happiness"] + delta_map.get("happiness", 0)))
+        energy = max(0, min(100, row["energy"] + delta_map.get("energy", 0)))
+        xp = row["xp"] + xp_gain
+        level = row["level"]
+        while xp >= level * 100:
+            xp -= level * 100
+            level += 1
+        await db.execute(
+            f"""UPDATE pets SET hunger=?, happiness=?, energy=?, xp=?, level=?, {stamp_field}=?
+                WHERE user_id=?""",
+            (hunger, happiness, energy, xp, level, _now(), user_id),
+        )
+        await db.commit()
+        cur = await db.execute("SELECT * FROM pets WHERE user_id=?", (user_id,))
+        return await cur.fetchone()
+
+
+async def delete_pet(user_id: int) -> None:
+    async with _conn() as db:
+        await db.execute("DELETE FROM pets WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+async def pets_count() -> int:
+    async with _conn() as db:
+        cur = await db.execute("SELECT COUNT(*) AS c FROM pets")
+        row = await cur.fetchone()
+        return row["c"] if row else 0
+
+
+# ------------------------------------------------- анонимные комментарии ----
+
+async def save_anon_comment_target(token: str, group_chat_id: int, group_message_id: int) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO anon_comment_targets (token, group_chat_id, group_message_id, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (token, group_chat_id, group_message_id, _now()),
+        )
+        await db.commit()
+
+
+async def get_anon_comment_target(token: str) -> aiosqlite.Row | None:
+    async with _conn() as db:
+        cur = await db.execute("SELECT * FROM anon_comment_targets WHERE token=?", (token,))
+        return await cur.fetchone()
+
+
 async def get_blood_command_by_id(command_id: int):
     async with _conn() as db:
         cur = await db.execute("SELECT * FROM blood_commands WHERE id=?", (command_id,))

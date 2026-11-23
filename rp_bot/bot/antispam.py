@@ -18,6 +18,43 @@ from bot.rich import send_rich
 _hits: dict[int, collections.deque] = collections.defaultdict(collections.deque)
 _cfg_cache: dict = {"at": 0.0, "cfg": None}
 
+# --- отдельное, всегда включённое правило: флуд одинаковым текстом -------
+# 15+ одинаковых сообщений за 10 секунд -> автомут, вне зависимости от общих
+# настроек антиспама выше (их можно выключить в панели, это правило — нет).
+DUPLICATE_LIMIT = 15
+DUPLICATE_WINDOW_SEC = 10
+DUPLICATE_MUTE_MIN = 30
+_dup_hits: dict[int, collections.deque] = collections.defaultdict(collections.deque)
+
+
+async def check_duplicate_flood(bot: Bot, message: Message) -> bool:
+    """15+ одинаковых подряд сообщений за 10 секунд -> автомут. True, если замутили сейчас."""
+    if message.chat.id != settings.allowed_chat_id or not message.from_user or message.from_user.is_bot:
+        return False
+    text = (message.text or message.caption or "").strip().casefold()
+    if not text:
+        return False
+
+    now = time.monotonic()
+    uid = message.from_user.id
+    dq = _dup_hits[uid]
+    dq.append((now, text))
+    while dq and now - dq[0][0] > DUPLICATE_WINDOW_SEC:
+        dq.popleft()
+    same_count = sum(1 for _, t in dq if t == text)
+    if same_count < DUPLICATE_LIMIT:
+        return False
+
+    dq.clear()
+    if await is_protected(bot, settings.allowed_chat_id, uid):
+        return False
+    _, reply_text = await apply_action(
+        bot, "mute", uid, duration_sec=DUPLICATE_MUTE_MIN * 60,
+        reason=f"автоматически: флуд одинаковыми сообщениями ({DUPLICATE_LIMIT}+ за {DUPLICATE_WINDOW_SEC} сек)",
+    )
+    await send_rich(bot, settings.allowed_chat_id, reply_text)
+    return True
+
 
 async def get_config() -> dict:
     if _cfg_cache["cfg"] is None or time.monotonic() - _cfg_cache["at"] > 15:
