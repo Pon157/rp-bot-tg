@@ -13,6 +13,7 @@ from bot.handlers import root_router
 from bot.middlewares import ChatGuardMiddleware, ActivityMiddleware, MyChatMemberGuard
 from bot.handlers.rules import rules_broadcast_loop
 from bot.handlers.relationships import auto_dissolve_loop, blood_decay_loop
+from bot.handlers.comments import comments_resolver_loop
 from bot.moderation import mod_queue_loop, warn_expiry_loop
 from bot.panel import start_panel, stop_panel
 
@@ -46,6 +47,7 @@ async def main() -> None:
         asyncio.create_task(blood_decay_loop(bot)),
         asyncio.create_task(mod_queue_loop(bot)),
         asyncio.create_task(warn_expiry_loop(bot)),
+        asyncio.create_task(comments_resolver_loop(bot)),
     ]
 
     panel = await start_panel()      # админ-панель стартует вместе с ботом

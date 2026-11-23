@@ -270,8 +270,36 @@ async def settings_page(request: Request, saved: str = ""):
         "spam_max": await repo.get_meta("spam_max_messages", "6"),
         "spam_window": await repo.get_meta("spam_window_sec", "10"),
         "spam_mute": await repo.get_meta("spam_mute_minutes", "10"),
+        "comments_channel_id": await repo.get_meta("comments_channel_id", ""),
+        "comments_group_id": await repo.get_meta("comments_group_id", ""),
+        "pet_egg_cost": await repo.get_meta("pet_egg_cost", "500"),
     }
     return templates.TemplateResponse("settings.html", {"request": request, "values": values, "saved": saved})
+
+
+@app.post("/settings/comments")
+async def comments_save(request: Request, comments_channel_id: str = Form("")):
+    if (r := require_login(request)):
+        return r
+    comments_channel_id = comments_channel_id.strip()
+    if comments_channel_id and not comments_channel_id.lstrip("-").isdigit():
+        raise HTTPException(status_code=400, detail="ID канала — число (вида -100xxxxxxxxxx)")
+    await repo.set_meta("comments_channel_id", comments_channel_id)
+    if not comments_channel_id:
+        await repo.set_meta("comments_group_id", "")
+    # сама панель с Telegram API не общается: ID привязанной группы обсуждений
+    # бот подхватит в фоновом цикле comments_resolver_loop (обычно в течение минуты).
+    return RedirectResponse("/settings?saved=1", status_code=303)
+
+
+@app.post("/settings/pets")
+async def pets_save(request: Request, pet_egg_cost: int = Form(500)):
+    if (r := require_login(request)):
+        return r
+    if pet_egg_cost < 1:
+        raise HTTPException(status_code=400, detail="Цена яйца должна быть не меньше 1 монеты")
+    await repo.set_meta("pet_egg_cost", str(pet_egg_cost))
+    return RedirectResponse("/settings?saved=1", status_code=303)
 
 
 @app.post("/settings/spam")

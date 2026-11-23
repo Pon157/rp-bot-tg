@@ -168,6 +168,32 @@ CREATE TABLE IF NOT EXISTS pending_bans (
     created_at TEXT
 );
 
+-- система питомцев: одно яйцо/питомец на пользователя
+CREATE TABLE IF NOT EXISTS pets (
+    user_id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    species TEXT NOT NULL,
+    hunger INTEGER NOT NULL DEFAULT 80,     -- сытость 0..100
+    happiness INTEGER NOT NULL DEFAULT 80,  -- счастье 0..100
+    energy INTEGER NOT NULL DEFAULT 80,     -- энергия 0..100
+    level INTEGER NOT NULL DEFAULT 1,
+    xp INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    last_tick_at TEXT NOT NULL,     -- когда в последний раз пересчитывали упадок характеристик
+    last_fed_at TEXT,
+    last_played_at TEXT,
+    last_walked_at TEXT
+);
+
+-- анонимные комментарии под постами настроенного канала: связываем диплинк-токен
+-- с сообщением в группе обсуждений, куда Telegram авто-пересылает посты канала
+CREATE TABLE IF NOT EXISTS anon_comment_targets (
+    token TEXT PRIMARY KEY,          -- короткий токен для /start cmt_<token>
+    group_chat_id INTEGER NOT NULL,  -- чат группы обсуждений, куда отвечаем
+    group_message_id INTEGER NOT NULL, -- сообщение (авто-пересланный пост), на которое отвечаем
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mod_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,

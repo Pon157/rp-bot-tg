@@ -1,20 +1,37 @@
 from __future__ import annotations
 
+import time
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
 from aiogram.types import ChatMemberUpdated, Message, TelegramObject
 
 from bot import repo
-from bot.antispam import check_spam
+from bot.antispam import check_spam, check_duplicate_flood
 from bot.moderation import apply_action
 from bot.config import reports_chat, settings
 
 STRANGER = "Я блять не в этой хуйне рожден. Верни меня в @{username}"
 
+_comments_group_cache: dict = {"at": 0.0, "chat_id": 0}
 
-def _known_chats() -> set[int]:
-    return {settings.allowed_chat_id, reports_chat()}
+
+async def _comments_group_id() -> int:
+    """Группа обсуждений настроенного канала (анон-комментарии) — кэш на 15 сек,
+    чтобы не дёргать базу на каждое сообщение."""
+    if time.monotonic() - _comments_group_cache["at"] > 15:
+        raw = await repo.get_meta("comments_group_id", "0")
+        _comments_group_cache["chat_id"] = int(raw or 0)
+        _comments_group_cache["at"] = time.monotonic()
+    return _comments_group_cache["chat_id"]
+
+
+async def _known_chats() -> set[int]:
+    chats = {settings.allowed_chat_id, reports_chat()}
+    group_id = await _comments_group_id()
+    if group_id:
+        chats.add(group_id)
+    return chats
 
 
 class ChatGuardMiddleware(BaseMiddleware):
@@ -24,11 +41,14 @@ class ChatGuardMiddleware(BaseMiddleware):
     async def __call__(self, handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
                        event: TelegramObject, data: dict[str, Any]) -> Any:
         chat = getattr(event, "chat", None)
-        if chat is not None and chat.type != "private" and chat.id not in _known_chats():
+        known = await _known_chats() if chat is not None and chat.type != "private" else set()
+        if chat is not None and chat.type != "private" and chat.id not in known:
             if isinstance(event, Message):
                 await event.answer(STRANGER.format(username=settings.bot_username))
             return None
-        if chat is not None and chat.type != "private" and chat.id != settings.allowed_chat_id:
+        group_id = await _comments_group_id()
+        if (chat is not None and chat.type != "private" and chat.id != settings.allowed_chat_id
+                and chat.id != group_id):
             return None  # чат модераторов: только кнопки репортов, команды не исполняем
         return await handler(event, data)
 
@@ -58,6 +78,7 @@ class ActivityMiddleware(BaseMiddleware):
             await repo.touch_user(event.from_user.id, event.from_user.username, event.from_user.first_name)
             await apply_pending_ban(event.bot, event.from_user.id)
             await check_spam(event.bot, event)
+            await check_duplicate_flood(event.bot, event)
         return await handler(event, data)
 
 
