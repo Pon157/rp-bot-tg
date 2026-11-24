@@ -132,7 +132,7 @@ async def receive_comment_text(message: Message) -> None:
         await message.answer(f"{e('warn')} Пустой комментарий не отправлен.")
         return
     try:
-        await message.bot.send_message(
+        sent = await message.bot.send_message(
             target["group_chat_id"],
             f"{e('person')} <b>Аноним:</b>\n{esc(text)}",
             reply_to_message_id=target["group_message_id"],
@@ -142,4 +142,6 @@ async def receive_comment_text(message: Message) -> None:
         logger.warning("Не удалось опубликовать анон-комментарий: %s", exc.message)
         await message.answer(f"{e('alert')} Не получилось опубликовать комментарий — попробуйте позже.")
         return
+    # Для модераторов: кто реально написал, можно узнать командой whois (ответом на этот пост).
+    await repo.save_anon_comment_author(target["group_chat_id"], sent.message_id, message.from_user.id)
     await message.answer(f"{e('check')} Комментарий опубликован анонимно.")

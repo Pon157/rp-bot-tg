@@ -194,6 +194,15 @@ CREATE TABLE IF NOT EXISTS anon_comment_targets (
     created_at TEXT NOT NULL
 );
 
+-- кто на самом деле написал опубликованный анонимный комментарий (для whois модераторами)
+CREATE TABLE IF NOT EXISTS anon_comment_authors (
+    group_chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    author_user_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (group_chat_id, message_id)
+);
+
 CREATE TABLE IF NOT EXISTS mod_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,

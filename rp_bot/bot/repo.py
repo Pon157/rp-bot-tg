@@ -885,6 +885,25 @@ async def get_anon_comment_target(token: str) -> aiosqlite.Row | None:
         return await cur.fetchone()
 
 
+async def save_anon_comment_author(group_chat_id: int, message_id: int, author_user_id: int) -> None:
+    async with _conn() as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO anon_comment_authors (group_chat_id, message_id, author_user_id, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (group_chat_id, message_id, author_user_id, _now()),
+        )
+        await db.commit()
+
+
+async def get_anon_comment_author(group_chat_id: int, message_id: int) -> aiosqlite.Row | None:
+    async with _conn() as db:
+        cur = await db.execute(
+            "SELECT * FROM anon_comment_authors WHERE group_chat_id=? AND message_id=?",
+            (group_chat_id, message_id),
+        )
+        return await cur.fetchone()
+
+
 async def get_blood_command_by_id(command_id: int):
     async with _conn() as db:
         cur = await db.execute("SELECT * FROM blood_commands WHERE id=?", (command_id,))
